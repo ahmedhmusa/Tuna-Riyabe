@@ -126,6 +126,8 @@ h3{font-size:15px; font-weight:600;}
 
 .list-card{background:var(--card); border-radius:var(--radius); border:1px solid var(--line); overflow:hidden;}
 .list-item{padding:13px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:10px;}
+.list-item.tappable{cursor:pointer;}
+.list-item.tappable:active{background:var(--foam);}
 .list-item:last-child{border-bottom:none;}
 .list-item .li-main{min-width:0;}
 .list-item .li-title{font-weight:600; font-size:14.5px; color:var(--ink);}

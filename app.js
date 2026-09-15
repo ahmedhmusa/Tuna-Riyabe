@@ -1375,7 +1375,7 @@ async function renderInventory(view){
   const dried = products.filter(p=>p.type==='dried' && p.active!==false);
   const rk = products.filter(p=>p.type==='rihaakuru' && p.active!==false);
   const stockRows = (list, unitWord) => list.map(p=>`
-    <div class="list-item">
+    <div class="list-item tappable" data-id="${p.id}">
       <div class="li-main"><div class="li-title">${escapeHtml(p.name)}</div><div class="li-sub">${escapeHtml(p.sku||'')}</div></div>
       <div class="li-right"><div class="li-amount num" style="color:${(p.stock||0)<=(p.lowStock||0)?'var(--coral)':'var(--ink)'}">${p.stock||0}</div>
         <div class="li-sub">${unitWord}${(p.stock||0)<=(p.lowStock||0)?' · low':''}</div></div>
@@ -1392,6 +1392,7 @@ async function renderInventory(view){
 
     ${dried.length? `<h2 class="section">${icon('package')} Dried Tuna</h2><div class="list-card section">${stockRows(dried,'packs')}</div>`:''}
     ${rk.length? `<h2 class="section">${icon('jar')} Rihaakuru</h2><div class="list-card section">${stockRows(rk,'bottles')}</div>`:''}
+    ${(dried.length||rk.length) ? '<p style="color:var(--muted); font-size:12px; margin-top:-6px;">Tap a product to adjust its stock.</p>' : ''}
 
     <h2 class="section">Recent Movements</h2>
     <div class="list-card section">
@@ -1410,6 +1411,7 @@ async function renderInventory(view){
     </div>
   `;
   $('#adjBtn').addEventListener('click', openInventoryAdjustForm);
+  $$('.list-item.tappable', view).forEach(li=> li.addEventListener('click', ()=> openProductStockAdjustForm(Number(li.dataset.id))));
 }
 function labelForTxType(t){
   return { sale:'Sale', purchase:'Fresh tuna purchase', adjustment:'Manual adjustment', production_usage:'Used in production', production_output:'Produced', waste:'Waste/loss' }[t] || t;
@@ -1439,6 +1441,50 @@ async function openInventoryAdjustForm(){
     await audit('adjust','inventory',null, `${delta} kg — ${$('#iaReason').value.trim()}`);
     toast('Inventory updated'); closeSheet(); renderView();
   };
+}
+
+/** Quick stock adjustment for a packaged product (Dried Tuna / Rihaakuru),
+    reachable by tapping that product directly on the Inventory screen. */
+async function openProductStockAdjustForm(productId){
+  const p = await db.products.get(productId);
+  if(!p){ toast('Product not found'); return; }
+  const unitWord = p.type==='rihaakuru' ? 'bottles' : 'packs';
+  const sheet = $('#sheet');
+  sheet.innerHTML = `
+    <div class="sheet-handle"></div>
+    <div class="sheet-header"><h2>${escapeHtml(p.name)}</h2><button class="sheet-close" id="psClose">${icon('x',16)}</button></div>
+    <div class="card" style="background:var(--foam); border:none; margin-bottom:16px;">
+      <div class="row"><span style="color:var(--muted); font-size:13.5px;">Current stock</span><span class="num" style="font-weight:700;">${p.stock||0} ${unitWord}</span></div>
+    </div>
+    <div class="field">
+      <label>Adjustment type</label>
+      <div class="seg" id="psType"><button data-v="add" class="active">Add stock</button><button data-v="remove">Remove / waste</button></div>
+    </div>
+    <div class="field"><label>Quantity (${unitWord})</label><input type="number" step="1" id="psQty" placeholder="0"></div>
+    <div class="field"><label>Reason (optional)</label><input id="psReason" placeholder="e.g. stock count correction, damaged"></div>
+    <div class="stack">
+      <button class="btn btn-primary btn-lg btn-block" id="psSave">Save Adjustment</button>
+      <button class="btn btn-ghost btn-block" id="psEditFull">Edit Full Product Details</button>
+    </div>
+  `;
+  openSheet();
+  let mode = 'add';
+  $('#psClose').onclick = closeSheet;
+  $('#psType').addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; $$('#psType button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); mode=b.dataset.v; });
+  $('#psSave').onclick = async ()=>{
+    const qty = Number($('#psQty').value);
+    if(!(qty>0)){ toast('Enter a quantity greater than 0'); return; }
+    const delta = mode==='add' ? qty : -qty;
+    if(mode==='remove' && qty > (p.stock||0)){
+      const ok = await confirmDialog('Reduce below zero?', `${p.name} only has ${p.stock||0} ${unitWord} in stock. Continue anyway?`, {yesLabel:'Continue', dangerConfirm:true});
+      if(!ok) return;
+    }
+    const newStock = await adjustProductStock(productId, delta, mode==='add'?'adjustment':'waste', 'manual', null, $('#psReason').value.trim());
+    await audit('adjust','product',productId, `${delta} ${unitWord} — ${$('#psReason').value.trim()}`);
+    toast(`Stock updated · Now ${newStock} ${unitWord}`);
+    closeSheet(); renderView();
+  };
+  $('#psEditFull').onclick = ()=>{ closeSheet(); openProductForm(productId); };
 }
 
 /* ============================================================
