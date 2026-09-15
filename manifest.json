@@ -1,0 +1,16 @@
+{
+  "name": "Island Tuna",
+  "short_name": "Island Tuna",
+  "description": "Offline-first business management app for a local tuna and seafood business.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0E2A3D",
+  "theme_color": "#0E2A3D",
+  "icons": [
+    { "src": "icon.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

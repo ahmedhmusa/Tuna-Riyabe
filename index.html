@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Island Tuna</title>
+<meta name="theme-color" content="#0E2A3D" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="icon.svg" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Island Tuna" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="splash">
+    <div class="splash-mark">🐟</div>
+    <div class="splash-title">ISLAND TUNA</div>
+  </div>
+
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="topbar-left">
+        <span id="statusDot" class="status-dot offline"></span>
+        <span id="statusLabel" class="status-label">Offline</span>
+      </div>
+      <div class="topbar-title" id="bizNameTop">ISLAND TUNA</div>
+      <button class="icon-btn" id="pinLockBtn" title="Lock" hidden>🔒</button>
+    </header>
+
+    <main id="view" class="view"></main>
+
+    <nav class="bottomnav">
+      <button class="navbtn" data-tab="home"><span class="navicon">🏠</span><span>Home</span></button>
+      <button class="navbtn" data-tab="sales"><span class="navicon">💰</span><span>Sales</span></button>
+      <button class="navbtn" data-tab="purchases"><span class="navicon">🎣</span><span>Purchases</span></button>
+      <button class="navbtn" data-tab="inventory"><span class="navicon">📦</span><span>Inventory</span></button>
+      <button class="navbtn" data-tab="more"><span class="navicon">⋯</span><span>More</span></button>
+    </nav>
+  </div>
+
+  <div id="sheetOverlay" class="sheet-overlay" hidden>
+    <div id="sheet" class="sheet"></div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
