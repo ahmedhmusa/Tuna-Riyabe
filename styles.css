@@ -15,6 +15,7 @@
   --bg:var(--sand);
   --danger:#C24A3A;
   --good:#2E8B6F;
+  --brown:#A9754A;
   --shadow: 0 1px 2px rgba(16,38,46,0.06), 0 6px 20px rgba(16,38,46,0.06);
   --radius: 16px;
   --radius-sm: 10px;
@@ -36,6 +37,7 @@
   --bg:#071620;
   --danger:#E07A6B;
   --good:#4FC79A;
+  --brown:#C99566;
   --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
 }
 

@@ -578,13 +578,16 @@ async function loadDemoData(){
   const rk250 = products.find(p=>p.sku==='RK-250');
 
   const d3 = new Date(); d3.setDate(d3.getDate()-3);
-  await recordProduction({ kind:'dried', productId: dried200.id, freshUsedKg:20, finishedKg:6,
-    unitsProduced:30, packagingCost:120, otherCost:80, date:d3.toISOString(), notes:'Demo batch', silent:true });
+  await recordProductionBatch({ items:[{ productId: dried200.id, freshUsedKg:20, unitsProduced:30 }],
+    date:d3.toISOString(), notes:'Demo batch', silent:true });
   const d2 = new Date(); d2.setDate(d2.getDate()-2);
-  await recordProduction({ kind:'dried', productId: dried500.id, freshUsedKg:15, finishedKg:4.5,
-    unitsProduced:9, packagingCost:70, otherCost:40, date:d2.toISOString(), notes:'Demo batch', silent:true });
-  await recordProduction({ kind:'rihaakuru', productId: rk250.id, freshUsedKg:12, finishedKg:5,
-    unitsProduced:20, packagingCost:140, otherCost:60, date:d2.toISOString(), notes:'Demo batch', silent:true });
+  await recordProductionBatch({
+    items:[
+      { productId: dried500.id, freshUsedKg:15, unitsProduced:9 },
+      { productId: rk250.id, freshUsedKg:12, unitsProduced:20 }
+    ],
+    date:d2.toISOString(), notes:'Demo batch — leftover fish split into dried tuna and Rihaakuru', silent:true
+  });
 
   // a couple of packaged-product sales
   await recordGeneralSale({
@@ -692,49 +695,67 @@ async function adjustProductStock(productId, deltaUnits, type, refType, refId, n
 /* ============================================================
    PRODUCTION (dried tuna & Rihaakuru batches)
    ============================================================ */
-async function recordProduction({kind, productId, freshUsedKg, finishedKg, unitsProduced, packagingCost, otherCost, notes, date, silent}){
-  freshUsedKg = Number(freshUsedKg||0);
-  unitsProduced = Number(unitsProduced||0);
-  finishedKg = Number(finishedKg||0);
-  packagingCost = Number(packagingCost||0);
-  otherCost = Number(otherCost||0);
-  if(!(freshUsedKg>0)) throw new Error('Fresh tuna used must be greater than 0.');
-  if(!(unitsProduced>0)) throw new Error('Number of packs produced must be greater than 0.');
-  if(packagingCost<0 || otherCost<0) throw new Error('Costs cannot be negative.');
+/** Records one production batch that can produce several products at once
+    (e.g. dried tuna AND Rihaakuru from the same leftover fresh tuna).
+    No packaging/other cost tracking — just fresh tuna in, products out. */
+async function recordProductionBatch({items, notes, date, silent}){
+  if(!items || !items.length) throw new Error('Add at least one product to this batch.');
+  const lines = items.map(it=>({
+    productId: Number(it.productId),
+    freshUsedKg: Number(it.freshUsedKg||0),
+    unitsProduced: Number(it.unitsProduced||0)
+  }));
+  for(const l of lines){
+    if(!l.productId) throw new Error('Choose a product for each line.');
+    if(!(l.freshUsedKg>0)) throw new Error('Fresh tuna used must be greater than 0 for each product.');
+    if(!(l.unitsProduced>0)) throw new Error('Units produced must be greater than 0 for each product.');
+  }
+  const totalFresh = Math.round(lines.reduce((a,l)=>a+l.freshUsedKg,0)*1000)/1000;
 
-  if((SETTINGS.freshTunaStock||0) < freshUsedKg && !SETTINGS.allowNegativeStock && !silent){
+  if((SETTINGS.freshTunaStock||0) < totalFresh && !SETTINGS.allowNegativeStock && !silent){
     const ok = await confirmDialog('Not enough fresh tuna',
-      `Only ${fmtKg(SETTINGS.freshTunaStock||0)} in stock but this batch uses ${fmtKg(freshUsedKg)}. Continue anyway?`,
+      `Only ${fmtKg(SETTINGS.freshTunaStock||0)} in stock but this batch uses ${fmtKg(totalFresh)}. Continue anyway?`,
       {yesLabel:'Continue', dangerConfirm:true});
     if(!ok) return null;
   }
 
-  const product = await db.products.get(productId);
-  const costInfo = await consumeFreshTunaFIFO(freshUsedKg);
-  const freshCost = costInfo.totalCost;
-  const totalCost = Math.round((freshCost + packagingCost + otherCost) * 100) / 100;
-  const costPerUnit = unitsProduced ? Math.round((totalCost/unitsProduced)*100)/100 : 0;
-  const expectedValue = product ? Math.round(product.sellPrice * unitsProduced * 100)/100 : 0;
+  const costInfo = await consumeFreshTunaFIFO(totalFresh);
+  const totalFreshCost = costInfo.totalCost;
+  const batchNo = await nextNumber('PB', db.productionBatches, code => b => b.batchNo && b.batchNo.includes(code));
 
-  const prefix = kind==='dried' ? 'DT' : 'RK';
-  const batchNo = await nextNumber(prefix, db.productionBatches, code => b => b.batchNo && b.batchNo.includes(code));
+  let totalExpectedValue = 0;
+  const lineItems = [];
+  for(const l of lines){
+    const product = await db.products.get(l.productId);
+    const share = totalFresh>0 ? l.freshUsedKg/totalFresh : 0;
+    const lineFreshCost = Math.round(totalFreshCost*share*100)/100;
+    const costPerUnit = l.unitsProduced ? Math.round((lineFreshCost/l.unitsProduced)*100)/100 : 0;
+    const expectedValue = product ? Math.round(product.sellPrice*l.unitsProduced*100)/100 : 0;
+    totalExpectedValue += expectedValue;
+    lineItems.push({
+      productId: l.productId, productName: product?.name||'', kind: product?.type||'',
+      freshUsedKg: l.freshUsedKg, unitsProduced: l.unitsProduced,
+      freshCost: lineFreshCost, costPerUnit, expectedValue
+    });
+    if(costPerUnit>0) await db.products.update(l.productId, { costPrice: costPerUnit });
+  }
+  totalExpectedValue = Math.round(totalExpectedValue*100)/100;
 
   const id = await db.productionBatches.add({
-    batchNo, kind, date: date||nowISO(), productId, productName: product?.name || '',
-    freshUsedKg, finishedKg, unitsProduced, packagingCost, otherCost,
-    freshCost, totalCost, costPerUnit, expectedValue, freshCostBreakdown: costInfo.breakdown,
-    expectedProfit: Math.round((expectedValue - totalCost)*100)/100,
+    batchNo, date: date||nowISO(), items: lineItems,
+    totalFreshUsedKg: totalFresh, totalFreshCost, freshCostBreakdown: costInfo.breakdown,
+    totalExpectedValue, expectedProfit: Math.round((totalExpectedValue-totalFreshCost)*100)/100,
     notes: notes||'', createdAt: nowISO()
   });
 
-  await adjustInventory(-freshUsedKg, 'production_usage', 'production', id, `Used in batch ${batchNo}`);
-  await adjustProductStock(productId, unitsProduced, 'production_output', 'production', id, `Produced in batch ${batchNo}`);
-  // keep the product's cost price current so profit figures stay meaningful
-  if(costPerUnit>0) await db.products.update(productId, { costPrice: costPerUnit });
+  await adjustInventory(-totalFresh, 'production_usage', 'production', id, `Used in batch ${batchNo}`);
+  for(const it of lineItems){
+    await adjustProductStock(it.productId, it.unitsProduced, 'production_output', 'production', id, `Produced in batch ${batchNo}`);
+  }
 
-  await audit('create','production',id, `${batchNo} ${unitsProduced} units`);
+  await audit('create','production',id, `${batchNo} ${lineItems.length} product(s)`);
   if(!silent) toast(`Batch saved · ${batchNo}`);
-  return { id, batchNo, totalCost, costPerUnit };
+  return { id, batchNo, totalFreshCost, totalExpectedValue };
 }
 
 /** Weighted average purchase cost per kg of fresh tuna, used for cost estimates. */
@@ -1164,9 +1185,9 @@ async function renderHome(view){
       <div class="card stat-card tappable" data-nav="inventory"><div class="label">${icon('fish')} Fresh Tuna</div><div class="value num">${fmtKg(SETTINGS.freshTunaStock||0)}</div>
         ${(SETTINGS.freshTunaStock||0) <= (SETTINGS.lowStockKg||10) ? '<div class="sub" style="color:var(--coral)">Low stock</div>' : '<div class="sub">In stock</div>'}</div>
       <div class="card stat-card tappable" data-nav="inventory"><div class="label">${icon('package')} Dried Tuna</div><div class="value num">${driedPacks}</div><div class="sub">packs available</div></div>
-      <div class="card stat-card tappable" data-nav="inventory"><div class="label">${icon('jar')} Rihaakuru</div><div class="value num">${rkBottles}</div><div class="sub">bottles available</div></div>
+      <div class="card stat-card tappable" data-nav="inventory"><div class="label" style="color:var(--brown);">${icon('jar')} Rihaakuru</div><div class="value num" style="color:var(--brown);">${rkBottles}</div><div class="sub">bottles available</div></div>
       <div class="card stat-card tappable" data-nav="purchases"><div class="label">${icon('anchor')} Today's Purchases</div><div class="value num" style="font-size:18px;">${fmtMoney(todayPurchasesTotal)}</div><div class="sub">${todayPurchases.length} purchase${todayPurchases.length===1?'':'s'}</div></div>
-      <div class="card stat-card tappable" data-nav="expenses"><div class="label">${icon('receipt')} Today's Expenses</div><div class="value num" style="font-size:18px;">${fmtMoney(todayExpensesTotal)}</div><div class="sub">${todayExpenses.length} entr${todayExpenses.length===1?'y':'ies'}</div></div>
+      <div class="card stat-card tappable" data-nav="expenses"><div class="label" style="color:var(--danger);">${icon('receipt')} Today's Expenses</div><div class="value num" style="font-size:18px; color:var(--danger);">${fmtMoney(todayExpensesTotal)}</div><div class="sub">${todayExpenses.length} entr${todayExpenses.length===1?'y':'ies'}</div></div>
       <div class="card stat-card tappable" data-nav="credit"><div class="label">${icon('card')} Customer Credit</div><div class="value num" style="font-size:18px;">${fmtMoney(totalCredit)}</div><div class="sub">${custWithCredit.length} owing</div></div>
     </div>
 
@@ -2316,130 +2337,180 @@ async function renderProduction(view){
   view.innerHTML = `
     <button class="link-btn" id="backBtn">‹ More</button>
     <div class="section" style="margin-top:10px;"><h1>Production</h1></div>
-    <div class="grid2 section">
-      <button class="quick-btn" id="newDried"><span class="qicon">${icon('package')}</span>Dried Tuna Batch</button>
-      <button class="quick-btn" id="newRk"><span class="qicon">${icon('jar')}</span>Rihaakuru Batch</button>
-    </div>
+    <button class="btn btn-primary btn-lg btn-block section" id="newBatchBtn">${icon('factory')} New Production Batch</button>
     <h2 class="section">Recent Batches</h2>
     <div class="list-card section">
-      ${batches.length===0? '<div class="empty">No production batches yet.</div>' : batches.map(b=>`
+      ${batches.length===0? '<div class="empty">No production batches yet.</div>' : batches.map(b=>{
+        const items = (b.items && b.items.length) ? b.items : [{ productName:b.productName||b.kind, unitsProduced:b.unitsProduced }];
+        const summary = items.map(it=>`${it.unitsProduced} × ${it.productName}`).join(', ');
+        const totalFresh = b.totalFreshUsedKg!=null ? b.totalFreshUsedKg : b.freshUsedKg;
+        const totalCost = b.totalFreshCost!=null ? b.totalFreshCost : (b.totalCost!=null ? b.totalCost : b.freshCost);
+        return `
         <div class="list-item" data-id="${b.id}" style="cursor:pointer;">
-          <div class="li-main"><div class="li-title">${escapeHtml(b.productName||b.kind)}</div>
-            <div class="li-sub">${b.batchNo} · ${fmtKg(b.freshUsedKg)} ${icon('arrow',13)} ${b.unitsProduced} units · ${fmtDate(b.date)}</div></div>
-          <div class="li-right"><div class="li-amount num">${fmtMoney(b.totalCost)}</div><div class="li-sub num">${fmtMoney(b.costPerUnit)}/unit</div></div>
-        </div>`).join('')}
+          <div class="li-main"><div class="li-title">${escapeHtml(summary)}</div>
+            <div class="li-sub">${b.batchNo} · ${fmtKg(totalFresh)} used · ${fmtDate(b.date)}</div></div>
+          <div class="li-right"><div class="li-amount num">${fmtMoney(totalCost)}</div><div class="li-sub">fresh cost</div></div>
+        </div>`;
+      }).join('')}
     </div>
   `;
   $('#backBtn').addEventListener('click', ()=> go('more'));
-  $('#newDried').addEventListener('click', ()=> openProductionForm('dried'));
-  $('#newRk').addEventListener('click', ()=> openProductionForm('rihaakuru'));
+  $('#newBatchBtn').addEventListener('click', ()=> openProductionForm());
   $$('.list-item', view).forEach(li=> li.addEventListener('click', ()=> openBatchDetail(Number(li.dataset.id))));
 }
 
-async function openProductionForm(kind){
-  const products = (await db.products.toArray()).filter(p=>p.type===kind && p.active!==false);
+async function openProductionForm(){
+  const products = (await db.products.toArray()).filter(p=>p.active!==false);
   if(!products.length){
-    toast(`Add a ${kind==='dried'?'Dried Tuna':'Rihaakuru'} product first`);
-    openProductForm(null, kind);
+    toast('Add a product first');
+    openProductForm(null);
     return;
   }
   const lots = await remainingFreshTunaLots();
   const totalRemaining = Math.round(lots.reduce((a,l)=>a+l.remainingKg,0)*1000)/1000;
   const sheet = $('#sheet');
-  sheet.innerHTML = `
-    <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>${kind==='dried'?'Dried Tuna':'Rihaakuru'} Batch</h2><button class="sheet-close" id="pdClose">${icon('x',16)}</button></div>
 
-    <div class="card" style="background:var(--foam); border:none; margin-bottom:14px;">
-      <div class="row"><span style="font-weight:600; font-size:13.5px;">Fresh tuna available</span><span class="num" style="font-weight:700;">${fmtKg(totalRemaining)}</span></div>
-      ${lots.length? `<div style="margin-top:8px;">
-        ${lots.map(l=>`<div class="row" style="font-size:12.5px; color:var(--muted); padding:3px 0;">
-          <span>${escapeHtml(l.purchaseNo)} · ${fmtDate(l.date)}</span><span class="num">${fmtKg(l.remainingKg)} @ ${fmtMoney(l.pricePerKg)}/kg</span>
-        </div>`).join('')}
-      </div>` : `<div style="font-size:12.5px; color:var(--muted); margin-top:4px;">No purchase lots on record — cost will use your overall average price.</div>`}
-      ${totalRemaining>0? `<button class="link-btn" id="useAllBtn" style="margin-top:8px;">Use all remaining (${fmtKg(totalRemaining)})</button>`:''}
-    </div>
+  let lines = [{ productId: products[0].id, freshKg:'', units:'' }];
+  let notesValue = '';
 
-    <div class="field"><label>Product / pack size</label>
-      <select id="pdProduct">${products.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}</select>
-    </div>
-    <div class="field"><label>Fresh tuna used (kg)</label><input type="number" step="0.01" id="pdFresh" placeholder="0.0"></div>
-    <div class="field"><label>Finished weight (kg, optional)</label><input type="number" step="0.01" id="pdFinished"></div>
-    <div class="field"><label>Number of ${kind==='dried'?'packs':'bottles'} produced</label><input type="number" step="1" id="pdUnits"></div>
-    <div class="field"><label>Packaging cost (${SETTINGS.currency})</label><input type="number" step="0.01" id="pdPack" value="0"></div>
-    <div class="field"><label>Other production cost (${SETTINGS.currency})</label><input type="number" step="0.01" id="pdOther" value="0"></div>
-    <div class="card" style="background:var(--foam); border:none; margin-bottom:14px;">
-      <div class="totalline"><span>Fresh tuna cost (from actual purchases)</span><span class="num" id="pdFreshCost">${fmtMoney(0)}</span></div>
-      <div class="totalline"><span>Total batch cost</span><span class="num" id="pdTotalCost">${fmtMoney(0)}</span></div>
-      <div class="totalline grand"><span>Cost per unit</span><span class="num" id="pdPerUnit">${fmtMoney(0)}</span></div>
-      <div class="totalline"><span>Expected sales value</span><span class="num" id="pdValue">${fmtMoney(0)}</span></div>
-      <div class="totalline"><span>Estimated profit</span><span class="num" id="pdProfit">${fmtMoney(0)}</span></div>
-    </div>
-    <div class="field"><label>Notes (optional)</label><input id="pdNotes"></div>
-    <button class="btn btn-primary btn-lg btn-block" id="pdSave">Save Batch</button>
-    <p style="color:var(--muted); font-size:11.5px; margin-top:10px;">Fresh tuna cost is worked out from the actual price of the purchases this batch draws from (oldest first), so estimated profit reflects what you really paid.</p>
-  `;
-  openSheet();
-  $('#pdClose').onclick = closeSheet;
-  $('#useAllBtn')?.addEventListener('click', ()=>{ $('#pdFresh').value = totalRemaining; recalc(); });
-  async function recalc(){
-    const fresh = Number($('#pdFresh').value||0);
-    const units = Number($('#pdUnits').value||0);
-    const pack = Number($('#pdPack').value||0);
-    const other = Number($('#pdOther').value||0);
-    const prod = products.find(p=>p.id===Number($('#pdProduct').value));
-    const costInfo = await previewFreshTunaFIFOCost(fresh);
-    const freshCost = costInfo.totalCost;
-    const totalCost = freshCost+pack+other;
-    const perUnit = units? totalCost/units : 0;
-    const value = prod? prod.sellPrice*units : 0;
-    $('#pdFreshCost').textContent = fmtMoney(freshCost);
-    $('#pdTotalCost').textContent = fmtMoney(totalCost);
-    $('#pdPerUnit').textContent = fmtMoney(perUnit);
-    $('#pdValue').textContent = fmtMoney(value);
-    $('#pdProfit').textContent = fmtMoney(value-totalCost);
+  function linesHtml(){
+    return lines.map((ln,i)=>`
+      <div class="card" style="background:var(--bg); border:1px solid var(--line); margin-bottom:10px; position:relative;">
+        ${lines.length>1? `<button type="button" data-remove="${i}" style="position:absolute; top:10px; right:12px; background:none; border:none; color:var(--danger);">${icon('x',14)}</button>`:''}
+        <div class="field"><label>Product</label>
+          <select data-role="product" data-idx="${i}">${products.map(p=>`<option value="${p.id}" ${Number(ln.productId)===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Fresh tuna (kg)</label><input type="number" step="0.01" data-role="freshKg" data-idx="${i}" value="${ln.freshKg}" placeholder="0.0"></div>
+          <div class="field"><label>Units produced</label><input type="number" step="1" data-role="units" data-idx="${i}" value="${ln.units}" placeholder="0"></div>
+        </div>
+      </div>`).join('');
   }
-  ['pdFresh','pdUnits','pdPack','pdOther'].forEach(id=> $('#'+id).addEventListener('input', recalc));
-  $('#pdProduct').addEventListener('change', recalc);
-  $('#pdSave').onclick = async ()=>{
+
+  function render(){
+    const allocated = lines.reduce((a,l)=>a+Number(l.freshKg||0),0);
+    const unallocated = Math.max(0, Math.round((totalRemaining-allocated)*100)/100);
+    sheet.innerHTML = `
+      <div class="sheet-handle"></div>
+      <div class="sheet-header"><h2>Production Batch</h2><button class="sheet-close" id="pdClose">${icon('x',16)}</button></div>
+
+      <div class="card" style="background:var(--foam); border:none; margin-bottom:14px;">
+        <div class="row"><span style="font-weight:600; font-size:13.5px;">Fresh tuna available</span><span class="num" style="font-weight:700;">${fmtKg(totalRemaining)}</span></div>
+        ${lots.length? `<div style="margin-top:8px;">
+          ${lots.map(l=>`<div class="row" style="font-size:12.5px; color:var(--muted); padding:3px 0;">
+            <span>${escapeHtml(l.purchaseNo)} · ${fmtDate(l.date)}</span><span class="num">${fmtKg(l.remainingKg)} @ ${fmtMoney(l.pricePerKg)}/kg</span>
+          </div>`).join('')}
+        </div>` : `<div style="font-size:12.5px; color:var(--muted); margin-top:4px;">No purchase lots on record — cost will use your overall average price.</div>`}
+      </div>
+
+      <h3 style="margin-bottom:10px;">What are you making from it?</h3>
+      <div id="linesContainer">${linesHtml()}</div>
+      <div class="stack" style="margin-bottom:16px;">
+        <button class="btn btn-ghost btn-block" id="addLineBtn">+ Add another product</button>
+        ${unallocated>0? `<button class="btn btn-ghost btn-block" id="useAllBtn">Allocate remaining ${fmtKg(unallocated)} to last line</button>`:''}
+      </div>
+
+      <div class="card" style="background:var(--foam); border:none; margin-bottom:14px;">
+        <div class="totalline"><span>Fresh tuna allocated</span><span class="num" id="pdAllocated">${fmtKg(0)}</span></div>
+        <div class="totalline"><span>Fresh tuna cost (from actual purchases)</span><span class="num" id="pdFreshCost">${fmtMoney(0)}</span></div>
+        <div class="totalline"><span>Expected sales value</span><span class="num" id="pdValue">${fmtMoney(0)}</span></div>
+        <div class="totalline grand"><span>Estimated profit</span><span class="num" id="pdProfit">${fmtMoney(0)}</span></div>
+      </div>
+      <div class="field"><label>Notes (optional)</label><input id="pdNotes" value="${escapeHtml(notesValue)}"></div>
+      <button class="btn btn-primary btn-lg btn-block" id="pdSave">Save Batch</button>
+      <p style="color:var(--muted); font-size:11.5px; margin-top:10px;">Fresh tuna cost comes from the actual price of the purchases this batch draws from (oldest first), split across each product by how much it used. No packaging or other costs — just the fish.</p>
+    `;
+    wire();
+    recalc();
+  }
+
+  function wire(){
+    $('#pdClose').onclick = closeSheet;
+    $('#pdNotes').addEventListener('input', e=>{ notesValue = e.target.value; });
+    $$('#linesContainer [data-role]').forEach(el=> el.addEventListener('input', onFieldChange));
+    $$('#linesContainer select[data-role="product"]').forEach(el=> el.addEventListener('change', onFieldChange));
+    $$('[data-remove]').forEach(btn=> btn.addEventListener('click', ()=>{
+      lines.splice(Number(btn.dataset.remove),1);
+      render();
+    }));
+    $('#addLineBtn').onclick = ()=>{
+      lines.push({ productId: products[0].id, freshKg:'', units:'' });
+      render();
+    };
+    $('#useAllBtn')?.addEventListener('click', ()=>{
+      const allocatedOthers = lines.slice(0,-1).reduce((a,l)=>a+Number(l.freshKg||0),0);
+      lines[lines.length-1].freshKg = Math.max(0, Math.round((totalRemaining-allocatedOthers)*100)/100);
+      render();
+    });
+    $('#pdSave').onclick = onSave;
+  }
+
+  function onFieldChange(e){
+    const idx = Number(e.target.dataset.idx);
+    const role = e.target.dataset.role;
+    if(role==='product') lines[idx].productId = Number(e.target.value);
+    else if(role==='freshKg') lines[idx].freshKg = e.target.value;
+    else if(role==='units') lines[idx].units = e.target.value;
+    recalc();
+  }
+
+  async function recalc(){
+    const totalFresh = lines.reduce((a,l)=>a+Number(l.freshKg||0),0);
+    const costInfo = await previewFreshTunaFIFOCost(totalFresh);
+    let value = 0;
+    for(const ln of lines){
+      const prod = products.find(p=>p.id===Number(ln.productId));
+      value += prod? prod.sellPrice*Number(ln.units||0) : 0;
+    }
+    if($('#pdAllocated')) $('#pdAllocated').textContent = fmtKg(totalFresh);
+    if($('#pdFreshCost')) $('#pdFreshCost').textContent = fmtMoney(costInfo.totalCost);
+    if($('#pdValue')) $('#pdValue').textContent = fmtMoney(value);
+    if($('#pdProfit')) $('#pdProfit').textContent = fmtMoney(value-costInfo.totalCost);
+  }
+
+  async function onSave(){
     try{
-      const res = await recordProduction({
-        kind, productId: Number($('#pdProduct').value),
-        freshUsedKg: $('#pdFresh').value, finishedKg: $('#pdFinished').value,
-        unitsProduced: $('#pdUnits').value, packagingCost: $('#pdPack').value,
-        otherCost: $('#pdOther').value, notes: $('#pdNotes').value.trim()
-      });
+      const payload = lines.map(l=> ({ productId: l.productId, freshUsedKg: l.freshKg, unitsProduced: l.units }));
+      const res = await recordProductionBatch({ items: payload, notes: notesValue.trim() });
       if(res){ closeSheet(); renderView(); }
     }catch(err){ toast(err.message); }
-  };
+  }
+
+  openSheet();
+  render();
 }
 
 async function openBatchDetail(id){
   const b = await db.productionBatches.get(id);
+  const items = (b.items && b.items.length) ? b.items : [{
+    productName: b.productName||b.kind, freshUsedKg: b.freshUsedKg, unitsProduced: b.unitsProduced,
+    freshCost: b.freshCost, costPerUnit: b.costPerUnit, expectedValue: b.expectedValue
+  }];
+  const totalFresh = b.totalFreshUsedKg!=null ? b.totalFreshUsedKg : b.freshUsedKg;
+  const totalFreshCost = b.totalFreshCost!=null ? b.totalFreshCost : (b.totalCost!=null ? b.totalCost : b.freshCost);
+  const totalValue = b.totalExpectedValue!=null ? b.totalExpectedValue : b.expectedValue;
+  const breakdown = b.freshCostBreakdown || [];
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
     <div class="sheet-header"><h2>${b.batchNo}</h2><button class="sheet-close" id="bdClose">${icon('x',16)}</button></div>
     <div class="stack">
-      <div class="row"><span style="color:var(--muted)">Product</span><span style="font-weight:600;">${escapeHtml(b.productName)}</span></div>
       <div class="row"><span style="color:var(--muted)">Date</span><span>${fmtDateTime(b.date)}</span></div>
-      <div class="row"><span style="color:var(--muted)">Fresh tuna used</span><span class="num">${fmtKg(b.freshUsedKg)}</span></div>
-      ${b.finishedKg? `<div class="row"><span style="color:var(--muted)">Finished weight</span><span class="num">${fmtKg(b.finishedKg)}</span></div>`:''}
-      <div class="row"><span style="color:var(--muted)">Units produced</span><span class="num">${b.unitsProduced}</span></div>
+      <div class="row"><span style="color:var(--muted)">Total fresh tuna used</span><span class="num" style="font-weight:700;">${fmtKg(totalFresh)}</span></div>
       <div class="divider"></div>
-      <div class="row"><span style="color:var(--muted)">Fresh tuna cost</span><span class="num">${fmtMoney(b.freshCost)}</span></div>
-      ${(b.freshCostBreakdown && b.freshCostBreakdown.length) ? `
-        <div style="padding-left:4px;">
-          ${b.freshCostBreakdown.map(l=>`<div class="row" style="font-size:12px; color:var(--muted); padding:2px 0;">
-            <span>${escapeHtml(l.purchaseNo)}</span><span class="num">${fmtKg(l.kg)} @ ${fmtMoney(l.pricePerKg)}/kg</span>
-          </div>`).join('')}
-        </div>` : ''}
-      <div class="row"><span style="color:var(--muted)">Packaging</span><span class="num">${fmtMoney(b.packagingCost)}</span></div>
-      <div class="row"><span style="color:var(--muted)">Other costs</span><span class="num">${fmtMoney(b.otherCost)}</span></div>
-      <div class="row"><span style="color:var(--muted)">Total batch cost</span><span class="num" style="font-weight:700;">${fmtMoney(b.totalCost)}</span></div>
-      <div class="row"><span style="color:var(--muted)">Cost per unit</span><span class="num">${fmtMoney(b.costPerUnit)}</span></div>
+      ${items.map(it=>`
+        <div class="row"><span style="font-weight:600;">${escapeHtml(it.productName)}</span><span class="num">${it.unitsProduced} units</span></div>
+        <div class="row" style="font-size:12px; color:var(--muted); padding-top:0;"><span>${fmtKg(it.freshUsedKg)} used · ${fmtMoney(it.costPerUnit)}/unit</span><span class="num">${fmtMoney(it.expectedValue)}</span></div>
+      `).join('')}
       <div class="divider"></div>
-      <div class="row"><span style="color:var(--muted)">Expected sales value</span><span class="num">${fmtMoney(b.expectedValue)}</span></div>
+      <div class="row"><span style="color:var(--muted)">Fresh tuna cost</span><span class="num" style="font-weight:700;">${fmtMoney(totalFreshCost)}</span></div>
+      ${breakdown.length ? `<div style="padding-left:4px;">
+        ${breakdown.map(l=>`<div class="row" style="font-size:12px; color:var(--muted); padding:2px 0;">
+          <span>${escapeHtml(l.purchaseNo)}</span><span class="num">${fmtKg(l.kg)} @ ${fmtMoney(l.pricePerKg)}/kg</span>
+        </div>`).join('')}
+      </div>` : ''}
+      <div class="divider"></div>
+      <div class="row"><span style="color:var(--muted)">Expected sales value</span><span class="num">${fmtMoney(totalValue)}</span></div>
       <div class="row"><span style="color:var(--muted)">Estimated profit</span><span class="num" style="color:${b.expectedProfit>=0?'var(--good)':'var(--danger)'}">${fmtMoney(b.expectedProfit)}</span></div>
       ${b.notes? `<div class="row"><span style="color:var(--muted)">Notes</span><span>${escapeHtml(b.notes)}</span></div>`:''}
     </div>
@@ -2863,11 +2934,20 @@ async function exportExpensesCSV(){
   triggerDownload(new Blob([csv],{type:'text/csv'}), `island-tuna-expenses-${todayISO()}.csv`);
 }
 async function exportProductionCSV(){
-  const rows = await db.productionBatches.toArray();
+  const batches = await db.productionBatches.toArray();
+  const rows = [];
+  for(const b of batches){
+    const items = (b.items && b.items.length) ? b.items : [{
+      productName: b.productName||b.kind, freshUsedKg: b.freshUsedKg, unitsProduced: b.unitsProduced, costPerUnit: b.costPerUnit
+    }];
+    for(const it of items){
+      rows.push({ batchNo:b.batchNo, date:b.date, productName:it.productName, freshUsedKg:it.freshUsedKg, unitsProduced:it.unitsProduced, costPerUnit:it.costPerUnit });
+    }
+  }
   const csv = toCSV(rows, [
     {label:'Batch No', get:r=>r.batchNo}, {label:'Date', get:r=>r.date}, {label:'Product', get:r=>r.productName},
     {label:'Fresh Used (kg)', get:r=>r.freshUsedKg}, {label:'Units Produced', get:r=>r.unitsProduced},
-    {label:'Total Cost', get:r=>r.totalCost}, {label:'Cost/Unit', get:r=>r.costPerUnit}
+    {label:'Cost/Unit', get:r=>r.costPerUnit}
   ]);
   triggerDownload(new Blob([csv],{type:'text/csv'}), `island-tuna-production-${todayISO()}.csv`);
 }
