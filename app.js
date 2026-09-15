@@ -291,7 +291,8 @@ const ICONS = {
   lock:     '<rect x="5" y="10.5" width="14" height="10" rx="1.8"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
   trash:    '<path d="M4.5 6.5h15"/><path d="M9 6.5V4.8a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V6.5"/><path d="M6.5 6.5l.9 13.2a1.4 1.4 0 0 0 1.4 1.3h6.4a1.4 1.4 0 0 0 1.4-1.3l.9-13.2"/><line x1="10" y1="10.3" x2="10.3" y2="17"/><line x1="14" y1="10.3" x2="13.7" y2="17"/>',
   badge:    '<rect x="4" y="3.5" width="16" height="17" rx="2"/><circle cx="12" cy="10.3" r="2.4"/><path d="M7.8,17.2c0.6-2 2.2-3.2 4.2-3.2s3.6,1.2 4.2,3.2"/>',
-  document: '<path d="M7,3h7l4,4v14H7z"/><path d="M14,3v4h4"/><line x1="9.3" y1="11.5" x2="14.7" y2="11.5"/><line x1="9.3" y1="14.7" x2="14.7" y2="14.7"/><line x1="9.3" y1="17.9" x2="12.5" y2="17.9"/>'
+  document: '<path d="M7,3h7l4,4v14H7z"/><path d="M14,3v4h4"/><line x1="9.3" y1="11.5" x2="14.7" y2="11.5"/><line x1="9.3" y1="14.7" x2="14.7" y2="14.7"/><line x1="9.3" y1="17.9" x2="12.5" y2="17.9"/>',
+  message:  '<path d="M4,5.5h16a1,1 0 0 1 1,1v10a1,1 0 0 1 -1,1H9l-4,3.5V17.5H4a1,1 0 0 1 -1,-1v-10a1,1 0 0 1 1,-1z"/>'
 };
 function icon(name, size){
   const s = ICONS[name];
@@ -1814,6 +1815,7 @@ async function renderCustomerDetail(view, customerId){
       <button class="quick-btn" id="cdSell"><span class="qicon">${icon('fish')}</span>Sell Tuna</button>
       <button class="quick-btn" id="cdPay" ${(cust.balance||0)<=0?'disabled':''} style="${(cust.balance||0)<=0?'opacity:0.5;':''}"><span class="qicon">${icon('card')}</span>Record Payment</button>
       <button class="quick-btn" id="cdRemind"><span class="qicon">${icon('share')}</span>Share Reminder</button>
+      <button class="quick-btn" id="cdSMS"><span class="qicon">${icon('message')}</span>Send via SMS</button>
       <button class="quick-btn" id="cdEdit"><span class="qicon">${icon('edit')}</span>Edit Customer</button>
     </div>
     <h2 class="section">Ledger</h2>
@@ -1829,6 +1831,7 @@ async function renderCustomerDetail(view, customerId){
   $('#cdSell').addEventListener('click', ()=> openQuickSalePreset(cust));
   $('#cdPay').addEventListener('click', ()=> openPaymentForm(cust.id));
   $('#cdRemind').addEventListener('click', ()=> shareReminder(cust));
+  $('#cdSMS').addEventListener('click', ()=> shareReminderViaSMS(cust));
   $('#cdEdit').addEventListener('click', ()=> openCustomerEditForm(cust));
 }
 
@@ -1847,6 +1850,21 @@ function shareReminder(cust){
     navigator.clipboard?.writeText(msg);
     toast('Reminder copied to clipboard');
   }
+}
+
+/** Opens the phone's native Messages app with the reminder pre-filled,
+    addressed to the customer's saved number if there is one. Also copies
+    the text to the clipboard as a fallback, since the sms: link's exact
+    behaviour (and whether a number is pre-filled) varies by device. */
+function shareReminderViaSMS(cust){
+  const msg = `Hi ${cust.name}, your current outstanding balance for ${SETTINGS.businessName||'Island Tuna'} purchases is ${fmtMoney(cust.balance||0)}. Thank you.`;
+  navigator.clipboard?.writeText(msg).catch(()=>{});
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || navigator.platform || '');
+  const sep = isIOS ? '&' : '?';
+  const phone = (cust.phone||'').replace(/[^0-9+]/g,'');
+  const url = `sms:${phone}${sep}body=${encodeURIComponent(msg)}`;
+  window.location.href = url;
+  toast(phone ? `Opening Messages to ${cust.phone}…` : 'Opening Messages… (reminder also copied, just in case)');
 }
 
 /* ============================================================
@@ -2370,21 +2388,28 @@ async function openProductionForm(){
   const totalRemaining = Math.round(lots.reduce((a,l)=>a+l.remainingKg,0)*1000)/1000;
   const sheet = $('#sheet');
 
-  let lines = [{ productId: products[0].id, freshKg:'', units:'' }];
+  let lines = []; // starts empty — tap product pills below to add lines
   let notesValue = '';
 
+  function pillsHtml(){
+    return products.map(p=>{
+      const selected = lines.some(l=>l.productId===p.id);
+      return `<button type="button" class="customer-pill prod-pill ${selected?'active':''}" data-pid="${p.id}">${escapeHtml(p.name)}</button>`;
+    }).join('');
+  }
+
   function linesHtml(){
-    return lines.map((ln,i)=>`
-      <div class="card" style="background:var(--bg); border:1px solid var(--line); margin-bottom:10px; position:relative;">
-        ${lines.length>1? `<button type="button" data-remove="${i}" style="position:absolute; top:10px; right:12px; background:none; border:none; color:var(--danger);">${icon('x',14)}</button>`:''}
-        <div class="field"><label>Product</label>
-          <select data-role="product" data-idx="${i}">${products.map(p=>`<option value="${p.id}" ${Number(ln.productId)===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>
-        </div>
+    return lines.map((ln,i)=>{
+      const prod = products.find(p=>p.id===ln.productId);
+      return `
+      <div class="card" style="background:var(--bg); border:1px solid var(--line); margin-bottom:10px;">
+        <div class="row" style="margin-bottom:8px;"><span style="font-weight:600;">${escapeHtml(prod?.name||'')}</span></div>
         <div class="grid2">
           <div class="field"><label>Fresh tuna (kg)</label><input type="number" step="0.01" data-role="freshKg" data-idx="${i}" value="${ln.freshKg}" placeholder="0.0"></div>
           <div class="field"><label>Units produced</label><input type="number" step="1" data-role="units" data-idx="${i}" value="${ln.units}" placeholder="0"></div>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   function render(){
@@ -2403,12 +2428,12 @@ async function openProductionForm(){
         </div>` : `<div style="font-size:12.5px; color:var(--muted); margin-top:4px;">No purchase lots on record — cost will use your overall average price.</div>`}
       </div>
 
-      <h3 style="margin-bottom:10px;">What are you making from it?</h3>
-      <div id="linesContainer">${linesHtml()}</div>
-      <div class="stack" style="margin-bottom:16px;">
-        <button class="btn btn-ghost btn-block" id="addLineBtn">+ Add another product</button>
-        ${unallocated>0? `<button class="btn btn-ghost btn-block" id="useAllBtn">Allocate remaining ${fmtKg(unallocated)} to last line</button>`:''}
-      </div>
+      <h3 style="margin-bottom:6px;">What are you making from it?</h3>
+      <p style="color:var(--muted); font-size:12.5px; margin-top:0; margin-bottom:10px;">Tap every product this batch will produce — e.g. both Dried Tuna and Rihaakuru from the same fresh tuna.</p>
+      <div class="pill-row" style="margin-bottom:16px;">${pillsHtml()}</div>
+
+      ${lines.length? `<div id="linesContainer">${linesHtml()}</div>` : `<div class="empty" style="margin-bottom:16px;">Tap a product above to add it to this batch.</div>`}
+      ${(lines.length && unallocated>0)? `<button class="btn btn-ghost btn-block" id="useAllBtn" style="margin-bottom:16px;">Allocate remaining ${fmtKg(unallocated)} to last product</button>`:''}
 
       <div class="card" style="background:var(--foam); border:none; margin-bottom:14px;">
         <div class="totalline"><span>Fresh tuna allocated</span><span class="num" id="pdAllocated">${fmtKg(0)}</span></div>
@@ -2427,16 +2452,14 @@ async function openProductionForm(){
   function wire(){
     $('#pdClose').onclick = closeSheet;
     $('#pdNotes').addEventListener('input', e=>{ notesValue = e.target.value; });
-    $$('#linesContainer [data-role]').forEach(el=> el.addEventListener('input', onFieldChange));
-    $$('#linesContainer select[data-role="product"]').forEach(el=> el.addEventListener('change', onFieldChange));
-    $$('[data-remove]').forEach(btn=> btn.addEventListener('click', ()=>{
-      lines.splice(Number(btn.dataset.remove),1);
+    $$('.prod-pill').forEach(btn=> btn.addEventListener('click', ()=>{
+      const pid = Number(btn.dataset.pid);
+      const idx = lines.findIndex(l=>l.productId===pid);
+      if(idx>=0) lines.splice(idx,1);
+      else lines.push({ productId: pid, freshKg:'', units:'' });
       render();
     }));
-    $('#addLineBtn').onclick = ()=>{
-      lines.push({ productId: products[0].id, freshKg:'', units:'' });
-      render();
-    };
+    $$('#linesContainer [data-role]').forEach(el=> el.addEventListener('input', onFieldChange));
     $('#useAllBtn')?.addEventListener('click', ()=>{
       const allocatedOthers = lines.slice(0,-1).reduce((a,l)=>a+Number(l.freshKg||0),0);
       lines[lines.length-1].freshKg = Math.max(0, Math.round((totalRemaining-allocatedOthers)*100)/100);
@@ -2448,8 +2471,7 @@ async function openProductionForm(){
   function onFieldChange(e){
     const idx = Number(e.target.dataset.idx);
     const role = e.target.dataset.role;
-    if(role==='product') lines[idx].productId = Number(e.target.value);
-    else if(role==='freshKg') lines[idx].freshKg = e.target.value;
+    if(role==='freshKg') lines[idx].freshKg = e.target.value;
     else if(role==='units') lines[idx].units = e.target.value;
     recalc();
   }
@@ -2459,7 +2481,7 @@ async function openProductionForm(){
     const costInfo = await previewFreshTunaFIFOCost(totalFresh);
     let value = 0;
     for(const ln of lines){
-      const prod = products.find(p=>p.id===Number(ln.productId));
+      const prod = products.find(p=>p.id===ln.productId);
       value += prod? prod.sellPrice*Number(ln.units||0) : 0;
     }
     if($('#pdAllocated')) $('#pdAllocated').textContent = fmtKg(totalFresh);
@@ -2470,6 +2492,7 @@ async function openProductionForm(){
 
   async function onSave(){
     try{
+      if(!lines.length) throw new Error('Tap at least one product to add it to this batch.');
       const payload = lines.map(l=> ({ productId: l.productId, freshUsedKg: l.freshKg, unitsProduced: l.units }));
       const res = await recordProductionBatch({ items: payload, notes: notesValue.trim() });
       if(res){ closeSheet(); renderView(); }
