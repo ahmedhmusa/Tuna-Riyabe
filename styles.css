@@ -77,13 +77,12 @@ input,select,textarea{font-family:inherit;}
 .topbar-title{font-family:var(--serif); font-weight:600; font-size:16px; letter-spacing:0.03em; color:var(--ink);}
 .icon-btn{background:none; border:none; font-size:18px; color:var(--muted);}
 
-.view{flex:1; overflow-y:auto; padding: 16px 16px calc(90px + env(safe-area-inset-bottom));}
+.view{flex:1; overflow-y:auto; padding: 16px;}
 
 .bottomnav{
-  position:fixed; left:0; right:0; bottom:0;
   display:flex; background:var(--card); border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom);
-  z-index:50;
+  flex-shrink:0;
 }
 .navbtn{
   flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;

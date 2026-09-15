@@ -1847,14 +1847,38 @@ async function openQuickSalePreset(cust){
 
 /** Builds the Dhivehi payment-reminder message: greeting, customer name,
     amount owed, then the account to send payment to. */
-function buildReminderMessage(cust){
+/** Builds an itemized statement — every ledger line since the balance last
+    cleared to zero, then the running total — followed by the exact Dhivehi
+    payment-request sentence, unchanged from what was written by hand. */
+async function buildReminderMessage(cust){
   const acctName = SETTINGS.bankAccountName || 'މުހައްމަދު ރިޔާޒު';
   const acctNumber = SETTINGS.bankAccountNumber || '';
-  return `އައްސަލާމު އަލައިކުން، ${cust.name} ގަނެފައިވާ މަހަށް ${fmtMoney(cust.balance||0)} ${acctName} ${acctNumber} އަށް ފޮނުވާލަ ދިނުމަށް އެދެން. ޝުކުރިއްޔާ`;
+  const closing = `އައްސަލާމު އަލައިކުން، ${cust.name} ގަނެފައިވާ މަހަށް ${fmtMoney(cust.balance||0)} ${acctName} ${acctNumber} އަށް ފޮނުވާލަ ދިނުމަށް އެދެން. ޝުކުރިއްޔާ`;
+
+  const ledger = (await db.customerTx.where('customerId').equals(cust.id).toArray())
+    .sort((a,b)=> new Date(a.date)-new Date(b.date));
+  if(!ledger.length) return closing;
+
+  // Only the open tab since the balance last cleared to zero, so the
+  // statement stays short and relevant rather than listing all history.
+  let startIdx = 0;
+  for(let i=ledger.length-1; i>=0; i--){
+    if(ledger[i].runningBalance<=0){ startIdx = i+1; break; }
+  }
+  let lines = ledger.slice(startIdx);
+  let truncatedNote = '';
+  if(lines.length>10){
+    truncatedNote = `(+${lines.length-10} earlier)\n`;
+    lines = lines.slice(-10);
+  }
+
+  const itemLines = lines.map(t=> `${fmtDate(t.date)}  ${t.type==='credit'?'+':'-'}${fmtMoney(t.amount)}`).join('\n');
+  const header = `${SETTINGS.businessName||'Island Tuna'}\n${cust.name}\n`;
+  return `${header}\n${truncatedNote}${itemLines}\n\nBalance: ${fmtMoney(cust.balance||0)}\n\n${closing}`;
 }
 
-function shareReminder(cust){
-  const msg = buildReminderMessage(cust);
+async function shareReminder(cust){
+  const msg = await buildReminderMessage(cust);
   if(navigator.share){
     navigator.share({ text: msg }).catch(()=>{});
   } else {
@@ -1867,8 +1891,8 @@ function shareReminder(cust){
     addressed to the customer's saved number if there is one. Also copies
     the text to the clipboard as a fallback, since the sms: link's exact
     behaviour (and whether a number is pre-filled) varies by device. */
-function shareReminderViaSMS(cust){
-  const msg = buildReminderMessage(cust);
+async function shareReminderViaSMS(cust){
+  const msg = await buildReminderMessage(cust);
   navigator.clipboard?.writeText(msg).catch(()=>{});
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || navigator.platform || '');
   const sep = isIOS ? '&' : '?';
