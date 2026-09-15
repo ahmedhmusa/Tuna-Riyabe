@@ -711,8 +711,8 @@ async function recordProduction({kind, productId, freshUsedKg, finishedKg, units
   }
 
   const product = await db.products.get(productId);
-  const avgCost = await averageFreshCostPerKg();
-  const freshCost = Math.round(avgCost * freshUsedKg * 100) / 100;
+  const costInfo = await consumeFreshTunaFIFO(freshUsedKg);
+  const freshCost = costInfo.totalCost;
   const totalCost = Math.round((freshCost + packagingCost + otherCost) * 100) / 100;
   const costPerUnit = unitsProduced ? Math.round((totalCost/unitsProduced)*100)/100 : 0;
   const expectedValue = product ? Math.round(product.sellPrice * unitsProduced * 100)/100 : 0;
@@ -723,7 +723,7 @@ async function recordProduction({kind, productId, freshUsedKg, finishedKg, units
   const id = await db.productionBatches.add({
     batchNo, kind, date: date||nowISO(), productId, productName: product?.name || '',
     freshUsedKg, finishedKg, unitsProduced, packagingCost, otherCost,
-    freshCost, totalCost, costPerUnit, expectedValue,
+    freshCost, totalCost, costPerUnit, expectedValue, freshCostBreakdown: costInfo.breakdown,
     expectedProfit: Math.round((expectedValue - totalCost)*100)/100,
     notes: notes||'', createdAt: nowISO()
   });
@@ -744,6 +744,86 @@ async function averageFreshCostPerKg(){
   const totalKg = purchases.reduce((a,p)=>a+p.weightKg,0);
   const totalCost = purchases.reduce((a,p)=>a+p.total,0);
   return totalKg>0 ? totalCost/totalKg : 0;
+}
+
+/* ============================================================
+   FRESH TUNA LOT TRACKING (FIFO)
+   Each purchase keeps a `remainingKg` — how much of that specific
+   purchase hasn't been sold or used in production yet. Selling or
+   producing draws down the OLDEST unconsumed purchase first, so
+   costing reflects what was actually paid, not a flat average.
+   ============================================================ */
+
+/** Non-mutating: unconsumed purchase lots, most-recent first (for display). */
+async function remainingFreshTunaLots(){
+  const purchases = (await db.purchases.toArray())
+    .filter(p=>!p.voided)
+    .map(p=> ({ ...p, remainingKg: (p.remainingKg==null ? p.weightKg : p.remainingKg) }))
+    .filter(p=> p.remainingKg > 0.001)
+    .sort((a,b)=> new Date(b.date) - new Date(a.date));
+  return purchases;
+}
+
+/** Non-mutating: what would `kgNeeded` cost if drawn FIFO right now — used
+    for live previews in forms before anything is actually saved. */
+async function previewFreshTunaFIFOCost(kgNeeded){
+  kgNeeded = Math.round(Number(kgNeeded||0)*1000)/1000;
+  if(kgNeeded<=0) return { totalCost:0, avgCostPerKg:0, breakdown:[] };
+  const purchases = (await db.purchases.toArray())
+    .filter(p=>!p.voided)
+    .map(p=> ({ ...p, remainingKg: (p.remainingKg==null ? p.weightKg : p.remainingKg) }))
+    .filter(p=> p.remainingKg > 0.0001)
+    .sort((a,b)=> new Date(a.date) - new Date(b.date));
+  let remaining = kgNeeded, totalCost = 0;
+  const breakdown = [];
+  for(const p of purchases){
+    if(remaining<=0.0001) break;
+    const take = Math.min(p.remainingKg, remaining);
+    totalCost += take*p.pricePerKg;
+    breakdown.push({ purchaseNo:p.purchaseNo, kg:Math.round(take*1000)/1000, pricePerKg:p.pricePerKg });
+    remaining -= take;
+  }
+  if(remaining>0.0001){
+    const avg = await averageFreshCostPerKg();
+    totalCost += remaining*avg;
+    breakdown.push({ purchaseNo:'Earlier stock', kg:Math.round(remaining*1000)/1000, pricePerKg:avg });
+  }
+  return { totalCost: Math.round(totalCost*100)/100, avgCostPerKg: kgNeeded>0? totalCost/kgNeeded : 0, breakdown };
+}
+
+/** Mutating: actually draws `kgNeeded` down from the oldest lots first and
+    returns the real cost basis. Call this exactly once per sale/batch,
+    at the moment it's actually saved. */
+async function consumeFreshTunaFIFO(kgNeeded){
+  const result = await previewFreshTunaFIFOCost(kgNeeded);
+  let remaining = Math.round(Number(kgNeeded||0)*1000)/1000;
+  if(remaining<=0) return result;
+  const purchases = (await db.purchases.toArray())
+    .filter(p=>!p.voided)
+    .map(p=> ({ ...p, remainingKg: (p.remainingKg==null ? p.weightKg : p.remainingKg) }))
+    .filter(p=> p.remainingKg > 0.0001)
+    .sort((a,b)=> new Date(a.date) - new Date(b.date));
+  for(const p of purchases){
+    if(remaining<=0.0001) break;
+    const take = Math.min(p.remainingKg, remaining);
+    await db.purchases.update(p.id, { remainingKg: Math.round((p.remainingKg-take)*1000)/1000 });
+    remaining -= take;
+  }
+  return result;
+}
+
+/** Reverses a FIFO consumption (used when voiding a sale) by crediting the
+    kg back onto the most recent purchase lot. An approximation — exact
+    original-lot attribution isn't tracked — but it keeps totals reconciled. */
+async function returnFreshTunaFIFO(kg){
+  kg = Math.round(Number(kg||0)*1000)/1000;
+  if(kg<=0) return;
+  const purchases = (await db.purchases.toArray()).filter(p=>!p.voided).sort((a,b)=> new Date(b.date)-new Date(a.date));
+  if(purchases.length){
+    const p = purchases[0];
+    const cur = p.remainingKg==null ? p.weightKg : p.remainingKg;
+    await db.purchases.update(p.id, { remainingKg: Math.round((cur+kg)*1000)/1000 });
+  }
 }
 
 /* ============================================================
@@ -830,10 +910,16 @@ async function recordGeneralSale({customerId, customerName, items, discount, pay
     notes: notes||'', createdAt: nowISO(), voided:false, multi:true
   });
 
+  let freshCostBasis = 0;
   for(const it of items){
-    if(it.kind==='fresh') await adjustInventory(-it.qty, 'sale', 'sale', id, `Sale ${saleNo}`);
+    if(it.kind==='fresh'){
+      await adjustInventory(-it.qty, 'sale', 'sale', id, `Sale ${saleNo}`);
+      const costInfo = await consumeFreshTunaFIFO(it.qty);
+      freshCostBasis += costInfo.totalCost;
+    }
     else await adjustProductStock(it.productId, -it.qty, 'sale', 'sale', id, `Sale ${saleNo}`);
   }
+  if(freshCostBasis>0) await db.sales.update(id, { freshCostBasis: Math.round(freshCostBasis*100)/100 });
   if(balance>0 && customerId){
     await addCustomerLedgerEntry(customerId, 'credit', balance, 'sale', id, `Sale ${saleNo}`);
   }
@@ -882,6 +968,8 @@ async function recordSale({customerId, customerName, date, weightKg, pricePerKg,
     notes: notes||'', createdAt: nowISO(), voided:false
   });
   const newStock = await adjustInventory(-weightKg, 'sale', 'sale', id, `Sale ${saleNo}`);
+  const costInfo = await consumeFreshTunaFIFO(weightKg);
+  await db.sales.update(id, { freshCostBasis: costInfo.totalCost });
   if(balance>0 && customerId){
     await addCustomerLedgerEntry(customerId, 'credit', balance, 'sale', id, `Fresh tuna ${fmtKg(weightKg)} — ${saleNo}`);
   }
@@ -896,11 +984,15 @@ async function voidSale(saleId){
   await db.sales.update(saleId, { voided:true, voidedAt: nowISO() });
   if(sale.items && sale.items.length){
     for(const it of sale.items){
-      if(it.kind==='fresh') await adjustInventory(it.qty, 'adjustment', 'void_sale', saleId, `Reversal of voided sale ${sale.saleNo}`);
+      if(it.kind==='fresh'){
+        await adjustInventory(it.qty, 'adjustment', 'void_sale', saleId, `Reversal of voided sale ${sale.saleNo}`);
+        await returnFreshTunaFIFO(it.qty);
+      }
       else await adjustProductStock(it.productId, it.qty, 'adjustment', 'void_sale', saleId, `Reversal of voided sale ${sale.saleNo}`);
     }
   } else {
     await adjustInventory(sale.weightKg, 'adjustment', 'void_sale', saleId, `Reversal of voided sale ${sale.saleNo}`);
+    await returnFreshTunaFIFO(sale.weightKg);
   }
   if(sale.balance>0 && sale.customerId){
     await addCustomerLedgerEntry(sale.customerId, 'payment', sale.balance, 'void_sale', saleId, `Reversal of voided sale ${sale.saleNo}`);
@@ -951,7 +1043,7 @@ async function recordPurchase({supplierId, supplierName, date, weightKg, pricePe
   const purchaseNo = await nextNumber('PUR', db.purchases, code => p => p.purchaseNo && p.purchaseNo.includes(code));
   const id = await db.purchases.add({
     purchaseNo, date: date||nowISO(), supplierId: supplierId||null, supplierName: supplierName||'Unknown',
-    weightKg, pricePerKg, total, paid, balance, paymentType,
+    weightKg, pricePerKg, total, paid, balance, paymentType, remainingKg: weightKg,
     status: balance<=0?'paid':(paid>0?'partial':'credit'), notes: notes||'', createdAt: nowISO(), voided:false
   });
   await adjustInventory(weightKg, 'purchase', 'purchase', id, `Purchase ${purchaseNo}`);
@@ -2248,11 +2340,23 @@ async function renderProduction(view){
 async function openProductionForm(kind){
   const products = (await db.products.toArray()).filter(p=>p.type===kind && p.active!==false);
   if(!products.length){ toast('Add a product for this type first'); return; }
-  const avgCost = await averageFreshCostPerKg();
+  const lots = await remainingFreshTunaLots();
+  const totalRemaining = Math.round(lots.reduce((a,l)=>a+l.remainingKg,0)*1000)/1000;
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
     <div class="sheet-header"><h2>${kind==='dried'?'Dried Tuna':'Rihaakuru'} Batch</h2><button class="sheet-close" id="pdClose">${icon('x',16)}</button></div>
+
+    <div class="card" style="background:var(--foam); border:none; margin-bottom:14px;">
+      <div class="row"><span style="font-weight:600; font-size:13.5px;">Fresh tuna available</span><span class="num" style="font-weight:700;">${fmtKg(totalRemaining)}</span></div>
+      ${lots.length? `<div style="margin-top:8px;">
+        ${lots.map(l=>`<div class="row" style="font-size:12.5px; color:var(--muted); padding:3px 0;">
+          <span>${escapeHtml(l.purchaseNo)} · ${fmtDate(l.date)}</span><span class="num">${fmtKg(l.remainingKg)} @ ${fmtMoney(l.pricePerKg)}/kg</span>
+        </div>`).join('')}
+      </div>` : `<div style="font-size:12.5px; color:var(--muted); margin-top:4px;">No purchase lots on record — cost will use your overall average price.</div>`}
+      ${totalRemaining>0? `<button class="link-btn" id="useAllBtn" style="margin-top:8px;">Use all remaining (${fmtKg(totalRemaining)})</button>`:''}
+    </div>
+
     <div class="field"><label>Product / pack size</label>
       <select id="pdProduct">${products.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}</select>
     </div>
@@ -2262,7 +2366,7 @@ async function openProductionForm(kind){
     <div class="field"><label>Packaging cost (${SETTINGS.currency})</label><input type="number" step="0.01" id="pdPack" value="0"></div>
     <div class="field"><label>Other production cost (${SETTINGS.currency})</label><input type="number" step="0.01" id="pdOther" value="0"></div>
     <div class="card" style="background:var(--foam); border:none; margin-bottom:14px;">
-      <div class="totalline"><span>Fresh tuna cost (est.)</span><span class="num" id="pdFreshCost">${fmtMoney(0)}</span></div>
+      <div class="totalline"><span>Fresh tuna cost (from actual purchases)</span><span class="num" id="pdFreshCost">${fmtMoney(0)}</span></div>
       <div class="totalline"><span>Total batch cost</span><span class="num" id="pdTotalCost">${fmtMoney(0)}</span></div>
       <div class="totalline grand"><span>Cost per unit</span><span class="num" id="pdPerUnit">${fmtMoney(0)}</span></div>
       <div class="totalline"><span>Expected sales value</span><span class="num" id="pdValue">${fmtMoney(0)}</span></div>
@@ -2270,17 +2374,19 @@ async function openProductionForm(kind){
     </div>
     <div class="field"><label>Notes (optional)</label><input id="pdNotes"></div>
     <button class="btn btn-primary btn-lg btn-block" id="pdSave">Save Batch</button>
-    <p style="color:var(--muted); font-size:11.5px; margin-top:10px;">Fresh tuna cost uses your average purchase price of ${fmtMoney(avgCost)}/kg, so profit here is an estimate.</p>
+    <p style="color:var(--muted); font-size:11.5px; margin-top:10px;">Fresh tuna cost is worked out from the actual price of the purchases this batch draws from (oldest first), so estimated profit reflects what you really paid.</p>
   `;
   openSheet();
   $('#pdClose').onclick = closeSheet;
-  function recalc(){
+  $('#useAllBtn')?.addEventListener('click', ()=>{ $('#pdFresh').value = totalRemaining; recalc(); });
+  async function recalc(){
     const fresh = Number($('#pdFresh').value||0);
     const units = Number($('#pdUnits').value||0);
     const pack = Number($('#pdPack').value||0);
     const other = Number($('#pdOther').value||0);
     const prod = products.find(p=>p.id===Number($('#pdProduct').value));
-    const freshCost = avgCost*fresh;
+    const costInfo = await previewFreshTunaFIFOCost(fresh);
+    const freshCost = costInfo.totalCost;
     const totalCost = freshCost+pack+other;
     const perUnit = units? totalCost/units : 0;
     const value = prod? prod.sellPrice*units : 0;
@@ -2319,6 +2425,12 @@ async function openBatchDetail(id){
       <div class="row"><span style="color:var(--muted)">Units produced</span><span class="num">${b.unitsProduced}</span></div>
       <div class="divider"></div>
       <div class="row"><span style="color:var(--muted)">Fresh tuna cost</span><span class="num">${fmtMoney(b.freshCost)}</span></div>
+      ${(b.freshCostBreakdown && b.freshCostBreakdown.length) ? `
+        <div style="padding-left:4px;">
+          ${b.freshCostBreakdown.map(l=>`<div class="row" style="font-size:12px; color:var(--muted); padding:2px 0;">
+            <span>${escapeHtml(l.purchaseNo)}</span><span class="num">${fmtKg(l.kg)} @ ${fmtMoney(l.pricePerKg)}/kg</span>
+          </div>`).join('')}
+        </div>` : ''}
       <div class="row"><span style="color:var(--muted)">Packaging</span><span class="num">${fmtMoney(b.packagingCost)}</span></div>
       <div class="row"><span style="color:var(--muted)">Other costs</span><span class="num">${fmtMoney(b.otherCost)}</span></div>
       <div class="row"><span style="color:var(--muted)">Total batch cost</span><span class="num" style="font-weight:700;">${fmtMoney(b.totalCost)}</span></div>
