@@ -288,7 +288,8 @@ const ICONS = {
   gear:     '<circle cx="12" cy="12" r="3.1"/><path d="M19.4 13.4a7.7 7.7 0 0 0 0-2.8l1.9-1.5-2-3.4-2.3.9a7.9 7.9 0 0 0-2.4-1.4L14.2 3H9.8l-.4 2.2a7.9 7.9 0 0 0-2.4 1.4l-2.3-.9-2 3.4 1.9 1.5a7.7 7.7 0 0 0 0 2.8l-1.9 1.5 2 3.4 2.3-.9a7.9 7.9 0 0 0 2.4 1.4l.4 2.2h4.4l.4-2.2a7.9 7.9 0 0 0 2.4-1.4l2.3.9 2-3.4z"/>',
   hourglass:'<path d="M6.5 3h11"/><path d="M6.5 21h11"/><path d="M7.5 3c0 5 4.2 6.3 4.5 9-0.3 2.7-4.5 4-4.5 9"/><path d="M16.5 3c0 5-4.2 6.3-4.5 9 0.3 2.7 4.5 4 4.5 9"/>',
   x:        '<line x1="5.5" y1="5.5" x2="18.5" y2="18.5"/><line x1="18.5" y1="5.5" x2="5.5" y2="18.5"/>',
-  lock:     '<rect x="5" y="10.5" width="14" height="10" rx="1.8"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>'
+  lock:     '<rect x="5" y="10.5" width="14" height="10" rx="1.8"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
+  trash:    '<path d="M4.5 6.5h15"/><path d="M9 6.5V4.8a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V6.5"/><path d="M6.5 6.5l.9 13.2a1.4 1.4 0 0 0 1.4 1.3h6.4a1.4 1.4 0 0 0 1.4-1.3l.9-13.2"/><line x1="10" y1="10.3" x2="10.3" y2="17"/><line x1="14" y1="10.3" x2="13.7" y2="17"/>'
 };
 function icon(name, size){
   const s = ICONS[name];
@@ -334,6 +335,96 @@ function confirmDialog(title, message, opts={}){
 }
 function openSheet(){ $('#sheetOverlay').hidden = false; }
 function closeSheet(){ $('#sheetOverlay').hidden = true; $('#sheet').innerHTML=''; }
+
+/* ============================================================
+   SWIPE TO DELETE — iOS-style: drag a list row left to reveal a
+   red delete button. Coexists with a normal tap handler on the
+   same row (a genuine swipe suppresses the following click).
+   ============================================================ */
+let _openSwipeRow = null; // only one row revealed at a time
+function closeAllSwipeRows(){
+  if(_openSwipeRow){
+    const inner = _openSwipeRow.querySelector('.swipe-inner');
+    if(inner){ inner.style.transition = 'transform 0.18s ease'; inner.style.transform = 'translateX(0)'; }
+    _openSwipeRow = null;
+  }
+}
+document.addEventListener('pointerdown', (e)=>{
+  if(_openSwipeRow && !_openSwipeRow.contains(e.target)) closeAllSwipeRows();
+});
+
+function onRowTap(li, fn){
+  li.addEventListener('click', ()=>{
+    if(li.dataset.suppressClick){ delete li.dataset.suppressClick; return; }
+    fn();
+  });
+}
+
+function attachSwipeDelete(li, onDelete, opts={}){
+  const REVEAL = 84;
+  const inner = document.createElement('div');
+  inner.className = 'swipe-inner';
+  while(li.firstChild) inner.appendChild(li.firstChild);
+  const delBtn = document.createElement('button');
+  delBtn.className = 'swipe-delete-btn';
+  delBtn.innerHTML = icon('trash',17) + `<span>${opts.label||'Delete'}</span>`;
+  li.appendChild(inner);
+  li.appendChild(delBtn);
+  li.classList.add('swipe-row');
+
+  let startX=0, startY=0, dragging=false, isSwiping=false, revealed=false, baseX=0, liveX=0;
+
+  function setX(x, animate){
+    const clamped = Math.max(-REVEAL, Math.min(0, x));
+    inner.style.transition = animate ? 'transform 0.18s ease' : 'none';
+    inner.style.transform = `translateX(${clamped}px)`;
+    liveX = clamped;
+    return clamped;
+  }
+  function start(x,y){
+    if(_openSwipeRow && _openSwipeRow!==li) closeAllSwipeRows();
+    startX=x; startY=y; dragging=true; isSwiping=false; baseX = revealed ? -REVEAL : 0;
+  }
+  function move(x,y){
+    if(!dragging) return;
+    const dx = x-startX, dy = y-startY;
+    if(!isSwiping){
+      if(Math.abs(dx) < 6 && Math.abs(dy) < 6) return; // still deciding
+      if(Math.abs(dy) > Math.abs(dx)) { dragging=false; return; } // vertical scroll, not a swipe
+      isSwiping = true;
+    }
+    setX(baseX+dx, false);
+  }
+  function end(){
+    if(!dragging) return;
+    dragging=false;
+    if(!isSwiping) return; // was a tap — let the normal click handler run
+    if(liveX < -REVEAL/2){ setX(-REVEAL, true); revealed=true; _openSwipeRow=li; }
+    else { setX(0, true); revealed=false; if(_openSwipeRow===li) _openSwipeRow=null; }
+    li.dataset.suppressClick = '1';
+  }
+
+  li.addEventListener('touchstart', e=> start(e.touches[0].clientX, e.touches[0].clientY), {passive:true});
+  li.addEventListener('touchmove', e=> move(e.touches[0].clientX, e.touches[0].clientY), {passive:true});
+  li.addEventListener('touchend', end);
+  li.addEventListener('mousedown', e=>{
+    start(e.clientX, e.clientY);
+    const mm = ev=> move(ev.clientX, ev.clientY);
+    const mu = ()=>{ end(); window.removeEventListener('mousemove',mm); window.removeEventListener('mouseup',mu); };
+    window.addEventListener('mousemove', mm);
+    window.addEventListener('mouseup', mu);
+  });
+  // if the row (or its inner content) is tapped while revealed, close it instead of firing the normal action
+  inner.addEventListener('click', (e)=>{
+    if(revealed){ e.stopPropagation(); setX(0,true); revealed=false; _openSwipeRow=null; li.dataset.suppressClick='1'; }
+  });
+  delBtn.addEventListener('click', async (e)=>{
+    e.stopPropagation();
+    const ok = opts.skipConfirm ? true : await confirmDialog(opts.confirmTitle||'Delete this item?', opts.confirmMessage||'This cannot be undone.', {yesLabel:opts.yesLabel||'Delete', dangerConfirm:true});
+    if(ok){ _openSwipeRow=null; onDelete(); }
+    else { setX(0,true); revealed=false; _openSwipeRow=null; }
+  });
+}
 $('#sheetOverlay').addEventListener('click', (e)=>{ if(e.target.id==='sheetOverlay') closeSheet(); });
 
 /* ============================================================
@@ -1411,7 +1502,22 @@ async function renderInventory(view){
     </div>
   `;
   $('#adjBtn').addEventListener('click', openInventoryAdjustForm);
-  $$('.list-item.tappable', view).forEach(li=> li.addEventListener('click', ()=> openProductStockAdjustForm(Number(li.dataset.id))));
+  $$('.list-item.tappable', view).forEach(li=>{
+    const productId = Number(li.dataset.id);
+    onRowTap(li, ()=> openProductStockAdjustForm(productId));
+    attachSwipeDelete(li, async ()=>{
+      const p = await db.products.get(productId);
+      await db.products.update(productId, { active:false });
+      await audit('deactivate','product',productId, p?.name||'');
+      toast(`${p?.name||'Product'} removed from inventory`);
+      renderView();
+    }, {
+      label:'Remove',
+      confirmTitle:'Remove from inventory?',
+      confirmMessage:'It will no longer appear here. Its stock and sales history are kept — you can bring it back anytime from Products.',
+      yesLabel:'Remove'
+    });
+  });
 }
 function labelForTxType(t){
   return { sale:'Sale', purchase:'Fresh tuna purchase', adjustment:'Manual adjustment', production_usage:'Used in production', production_output:'Produced', waste:'Waste/loss' }[t] || t;
@@ -1846,12 +1952,18 @@ async function openProductForm(productId){
     <div class="field"><label>Selling price (${SETTINGS.currency})</label><input type="number" step="0.01" id="prPrice" value="${p?.sellPrice||''}"></div>
     <div class="field"><label>Low-stock threshold</label><input type="number" id="prLow" value="${p?.lowStock??5}"></div>
     ${p? `<div class="field"><label>Current stock (units)</label><input type="number" step="0.01" id="prStock" value="${p.stock||0}"><div style="font-size:11.5px;color:var(--muted);margin-top:5px;">Changing this records a manual stock adjustment.</div></div>`:''}
+    ${p? `<div class="field">
+      <label>Status</label>
+      <div class="seg" id="prActive"><button data-v="1" class="${p.active!==false?'active':''}">Active</button><button data-v="0" class="${p.active===false?'active':''}">Removed from inventory</button></div>
+    </div>`:''}
     <button class="btn btn-primary btn-lg btn-block" id="prSave">${p?'Save Changes':'Add Product'}</button>
   `;
   openSheet();
   let type = p?.type || 'dried';
+  let activeState = p ? (p.active!==false) : true;
   $('#prClose').onclick = closeSheet;
   $('#prType').addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; $$('#prType button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); type=b.dataset.v; });
+  $('#prActive')?.addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; $$('#prActive button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); activeState = b.dataset.v==='1'; });
   $('#prSave').onclick = async ()=>{
     const name = $('#prName').value.trim();
     if(!name){ toast('Enter a product name'); return; }
@@ -1860,7 +1972,7 @@ async function openProductForm(productId){
     const payload = { name, sku: $('#prSku').value.trim(), type, packSize: Number($('#prSize').value||0),
       sellPrice, lowStock: Number($('#prLow').value||0) };
     if(p){
-      await db.products.update(p.id, payload);
+      await db.products.update(p.id, { ...payload, active: activeState });
       const newStock = Number($('#prStock').value||0);
       const delta = Math.round((newStock - (p.stock||0))*100)/100;
       if(delta !== 0) await adjustProductStock(p.id, delta, 'adjustment', 'manual', null, 'Manual stock correction');

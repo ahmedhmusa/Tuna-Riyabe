@@ -128,6 +128,19 @@ h3{font-size:15px; font-weight:600;}
 .list-item{padding:13px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:10px;}
 .list-item.tappable{cursor:pointer;}
 .list-item.tappable:active{background:var(--foam);}
+
+.swipe-row{position:relative; overflow:hidden; padding:0 !important; touch-action:pan-y;}
+.swipe-row .swipe-inner{
+  display:flex; justify-content:space-between; align-items:center; gap:10px;
+  padding:13px 16px; background:var(--card); position:relative; z-index:2;
+  cursor:pointer; user-select:none; -webkit-user-select:none;
+}
+.swipe-row .swipe-delete-btn{
+  position:absolute; top:0; right:0; bottom:0; width:84px;
+  background:var(--danger); color:#fff; border:none;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  font-weight:600; font-size:11.5px; z-index:1;
+}
 .list-item:last-child{border-bottom:none;}
 .list-item .li-main{min-width:0;}
 .list-item .li-title{font-weight:600; font-size:14.5px; color:var(--ink);}
