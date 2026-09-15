@@ -774,6 +774,29 @@ async function voidSale(saleId){
   toast('Sale voided');
 }
 
+/** Record a payment against one specific sale — settles that sale's own
+    balance/status and mirrors the same amount as a payment in the
+    customer's overall ledger, so the two stay consistent. */
+async function recordSalePayment(saleId, amount){
+  const sale = await db.sales.get(saleId);
+  if(!sale || sale.voided) throw new Error('Sale not found');
+  amount = Number(amount);
+  if(!(amount>0)) throw new Error('Enter a payment amount greater than 0.');
+  if(amount > sale.balance + 0.001) amount = sale.balance; // never overshoot this sale's own balance
+
+  const newPaid = Math.round((sale.paid+amount)*100)/100;
+  const newBalance = Math.round((sale.total-newPaid)*100)/100;
+  const newStatus = newBalance<=0.001 ? 'paid' : 'partial';
+  await db.sales.update(saleId, { paid:newPaid, balance:Math.max(0,newBalance), status:newStatus });
+
+  if(sale.customerId){
+    await addCustomerLedgerEntry(sale.customerId, 'payment', amount, 'sale_payment', saleId, `Payment against ${sale.saleNo}`);
+    await db.payments.add({ customerId: sale.customerId, amount, method:'cash', date: nowISO(), notes:`Against ${sale.saleNo}`, createdAt: nowISO() });
+  }
+  await audit('update','sale',saleId, `Payment of ${fmtMoney(amount)} recorded, now ${newStatus}`);
+  return { newPaid, newBalance: Math.max(0,newBalance), newStatus };
+}
+
 /* ============================================================
    PURCHASES (Fresh Tuna from suppliers)
    ============================================================ */
@@ -896,14 +919,11 @@ async function renderHome(view){
   }
   const todayProfit = todaySalesTotal - cogs - todayExpensesTotal;
 
-  const hour = new Date().getHours();
-  const greeting = hour<12?'Good Morning':(hour<17?'Good Afternoon':'Good Evening');
-
   view.innerHTML = `
     <div class="section">
       <div class="eyebrow">${fmtDate(nowISO())}</div>
-      <h1>${greeting} 👋</h1>
-      <div style="color:var(--muted); font-size:14px; margin-top:2px;">${escapeHtml(SETTINGS.businessName||'Island Tuna')}${SETTINGS.island? ' · '+escapeHtml(SETTINGS.island):''}</div>
+      <h1>${escapeHtml(SETTINGS.businessName||'Island Tuna')}</h1>
+      ${SETTINGS.island? `<div style="color:var(--muted); font-size:14px; margin-top:2px;">${escapeHtml(SETTINGS.island)}</div>` : ''}
     </div>
 
     <div class="section hero-card">
@@ -913,13 +933,13 @@ async function renderHome(view){
     </div>
 
     <div class="section grid2">
-      <div class="card stat-card"><div class="label">🐟 Fresh Tuna</div><div class="value num">${fmtKg(SETTINGS.freshTunaStock||0)}</div>
+      <div class="card stat-card tappable" data-nav="inventory"><div class="label">🐟 Fresh Tuna</div><div class="value num">${fmtKg(SETTINGS.freshTunaStock||0)}</div>
         ${(SETTINGS.freshTunaStock||0) <= (SETTINGS.lowStockKg||10) ? '<div class="sub" style="color:var(--coral)">Low stock</div>' : '<div class="sub">In stock</div>'}</div>
-      <div class="card stat-card"><div class="label">📦 Dried Tuna</div><div class="value num">${driedPacks}</div><div class="sub">packs available</div></div>
-      <div class="card stat-card"><div class="label">🍯 Rihaakuru</div><div class="value num">${rkBottles}</div><div class="sub">bottles available</div></div>
-      <div class="card stat-card"><div class="label">🎣 Today's Purchases</div><div class="value num" style="font-size:18px;">${fmtMoney(todayPurchasesTotal)}</div><div class="sub">${todayPurchases.length} purchase${todayPurchases.length===1?'':'s'}</div></div>
-      <div class="card stat-card"><div class="label">🧾 Today's Expenses</div><div class="value num" style="font-size:18px;">${fmtMoney(todayExpensesTotal)}</div><div class="sub">${todayExpenses.length} entr${todayExpenses.length===1?'y':'ies'}</div></div>
-      <div class="card stat-card"><div class="label">💳 Customer Credit</div><div class="value num" style="font-size:18px;">${fmtMoney(totalCredit)}</div><div class="sub">${custWithCredit.length} owing</div></div>
+      <div class="card stat-card tappable" data-nav="inventory"><div class="label">📦 Dried Tuna</div><div class="value num">${driedPacks}</div><div class="sub">packs available</div></div>
+      <div class="card stat-card tappable" data-nav="inventory"><div class="label">🍯 Rihaakuru</div><div class="value num">${rkBottles}</div><div class="sub">bottles available</div></div>
+      <div class="card stat-card tappable" data-nav="purchases"><div class="label">🎣 Today's Purchases</div><div class="value num" style="font-size:18px;">${fmtMoney(todayPurchasesTotal)}</div><div class="sub">${todayPurchases.length} purchase${todayPurchases.length===1?'':'s'}</div></div>
+      <div class="card stat-card tappable" data-nav="expenses"><div class="label">🧾 Today's Expenses</div><div class="value num" style="font-size:18px;">${fmtMoney(todayExpensesTotal)}</div><div class="sub">${todayExpenses.length} entr${todayExpenses.length===1?'y':'ies'}</div></div>
+      <div class="card stat-card tappable" data-nav="credit"><div class="label">💳 Customer Credit</div><div class="value num" style="font-size:18px;">${fmtMoney(totalCredit)}</div><div class="sub">${custWithCredit.length} owing</div></div>
     </div>
 
     ${custWithCredit.length>0 ? `
@@ -951,6 +971,7 @@ async function renderHome(view){
       </div>
     </div>
   `;
+  $$('.stat-card.tappable', view).forEach(card=> card.addEventListener('click', ()=> go(card.dataset.nav)));
   $('#qaSell')?.addEventListener('click', openQuickSale);
   $('#qaGeneralSale')?.addEventListener('click', openGeneralSale);
   $('#qaPurchase')?.addEventListener('click', openQuickPurchase);
@@ -1215,32 +1236,67 @@ function filterByPeriod(items, period){
 async function openSaleDetail(id){
   const s = await db.sales.get(id);
   const sheet = $('#sheet');
-  sheet.innerHTML = `
-    <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>${s.saleNo}</h2><button class="sheet-close" id="sdClose">✕</button></div>
-    <div class="stack">
-      <div class="row"><span style="color:var(--muted)">Customer</span><span style="font-weight:600;">${escapeHtml(s.customerName)}</span></div>
-      <div class="row"><span style="color:var(--muted)">Date</span><span>${fmtDateTime(s.date)}</span></div>
-      ${(s.items && s.items.length)
-        ? s.items.map(it=>`<div class="row"><span style="color:var(--muted)">${escapeHtml(it.name)}</span><span class="num">${it.qty}${it.kind==='fresh'?' kg':' ×'} @ ${fmtMoney(it.unitPrice)} = ${fmtMoney(it.qty*it.unitPrice)}</span></div>`).join('')
-        : `<div class="row"><span style="color:var(--muted)">Weight</span><span class="num">${fmtKg(s.weightKg)}</span></div>
-           <div class="row"><span style="color:var(--muted)">Price/kg</span><span class="num">${fmtMoney(s.pricePerKg)}</span></div>`}
-      ${s.discount? `<div class="row"><span style="color:var(--muted)">Discount</span><span class="num">−${fmtMoney(s.discount)}</span></div>`:''}
-      <div class="divider"></div>
-      <div class="row"><span style="color:var(--muted)">Total</span><span class="num" style="font-weight:700;">${fmtMoney(s.total)}</span></div>
-      <div class="row"><span style="color:var(--muted)">Paid</span><span class="num">${fmtMoney(s.paid)}</span></div>
-      <div class="row"><span style="color:var(--muted)">Balance</span><span class="num" style="color:${s.balance>0?'var(--danger)':'var(--good)'}">${fmtMoney(s.balance)}</span></div>
-      ${s.notes? `<div class="row"><span style="color:var(--muted)">Notes</span><span>${escapeHtml(s.notes)}</span></div>`:''}
-    </div>
-    ${s.voided? '<div class="warn-banner" style="margin-top:16px;"><div class="wtitle">This sale was voided</div></div>' :
-      `<button class="btn btn-danger btn-block" id="voidBtn" style="margin-top:20px;">Void this sale</button>`}
-  `;
+  function render(){
+    sheet.innerHTML = `
+      <div class="sheet-handle"></div>
+      <div class="sheet-header"><h2>${s.saleNo}</h2><button class="sheet-close" id="sdClose">✕</button></div>
+      <div class="stack">
+        <div class="row"><span style="color:var(--muted)">Customer</span><span style="font-weight:600;">${escapeHtml(s.customerName)}</span></div>
+        <div class="row"><span style="color:var(--muted)">Date</span><span>${fmtDateTime(s.date)}</span></div>
+        ${(s.items && s.items.length)
+          ? s.items.map(it=>`<div class="row"><span style="color:var(--muted)">${escapeHtml(it.name)}</span><span class="num">${it.qty}${it.kind==='fresh'?' kg':' ×'} @ ${fmtMoney(it.unitPrice)} = ${fmtMoney(it.qty*it.unitPrice)}</span></div>`).join('')
+          : `<div class="row"><span style="color:var(--muted)">Weight</span><span class="num">${fmtKg(s.weightKg)}</span></div>
+             <div class="row"><span style="color:var(--muted)">Price/kg</span><span class="num">${fmtMoney(s.pricePerKg)}</span></div>`}
+        ${s.discount? `<div class="row"><span style="color:var(--muted)">Discount</span><span class="num">−${fmtMoney(s.discount)}</span></div>`:''}
+        <div class="divider"></div>
+        <div class="row"><span style="color:var(--muted)">Total</span><span class="num" style="font-weight:700;">${fmtMoney(s.total)}</span></div>
+        <div class="row"><span style="color:var(--muted)">Paid</span><span class="num">${fmtMoney(s.paid)}</span></div>
+        <div class="row"><span style="color:var(--muted)">Balance</span><span class="num" style="color:${s.balance>0?'var(--danger)':'var(--good)'}">${fmtMoney(s.balance)}</span></div>
+        <div class="row"><span style="color:var(--muted)">Status</span><span class="badge badge-${s.status}">${s.status.toUpperCase()}</span></div>
+        ${s.notes? `<div class="row"><span style="color:var(--muted)">Notes</span><span>${escapeHtml(s.notes)}</span></div>`:''}
+      </div>
+      ${s.voided ? '<div class="warn-banner" style="margin-top:16px;"><div class="wtitle">This sale was voided</div></div>' : `
+        ${s.balance>0 && s.customerId ? `
+          <div class="divider"></div>
+          <h3 style="margin-bottom:10px;">Record payment for this sale</h3>
+          <div class="field"><label>Amount (${SETTINGS.currency})</label><input type="number" step="0.01" id="sdPayAmt" value="${s.balance}"></div>
+          <div class="stack">
+            <button class="btn btn-primary btn-block" id="sdMarkPaid">Mark as Fully Paid</button>
+            <button class="btn btn-ghost btn-block" id="sdAddPayment">Record This Amount</button>
+          </div>
+        ` : ''}
+        <button class="btn btn-danger btn-block" id="voidBtn" style="margin-top:20px;">Void this sale</button>
+      `}
+    `;
+    $('#sdClose').onclick = closeSheet;
+    $('#sdMarkPaid')?.addEventListener('click', async ()=>{
+      try{
+        await recordSalePayment(id, s.balance);
+        const fresh = await db.sales.get(id);
+        Object.assign(s, fresh);
+        toast('Sale marked as paid');
+        render();
+        renderView();
+      }catch(err){ toast(err.message); }
+    });
+    $('#sdAddPayment')?.addEventListener('click', async ()=>{
+      try{
+        const amt = Number($('#sdPayAmt').value);
+        await recordSalePayment(id, amt);
+        const fresh = await db.sales.get(id);
+        Object.assign(s, fresh);
+        toast('Payment recorded');
+        render();
+        renderView();
+      }catch(err){ toast(err.message); }
+    });
+    $('#voidBtn')?.addEventListener('click', async ()=>{
+      const ok = await confirmDialog('Void this sale?', `This will reverse the inventory and credit effects of ${s.saleNo}. This cannot be undone.`, {yesLabel:'Void sale', dangerConfirm:true});
+      if(ok){ await voidSale(id); closeSheet(); renderView(); }
+    });
+  }
+  render();
   openSheet();
-  $('#sdClose').onclick = closeSheet;
-  $('#voidBtn')?.addEventListener('click', async ()=>{
-    const ok = await confirmDialog('Void this sale?', `This will reverse the inventory and credit effects of ${s.saleNo}. This cannot be undone.`, {yesLabel:'Void sale', dangerConfirm:true});
-    if(ok){ await voidSale(id); closeSheet(); renderView(); }
-  });
 }
 
 /* ============================================================
@@ -1348,21 +1404,35 @@ async function openInventoryAdjustForm(){
    ============================================================ */
 async function renderCustomers(view){
   const q = (STATE.custSearch||'').toLowerCase();
+  STATE.custFilter = STATE.custFilter || 'all';
   let customers = await db.customers.orderBy('name').toArray();
   if(q) customers = customers.filter(c=> c.name.toLowerCase().includes(q) || (c.phone||'').includes(q));
+
+  const totalCount = customers.length;
+  const owingCount = customers.filter(c=>(c.balance||0)>0).length;
+  const paidCount = customers.filter(c=>(c.balance||0)<=0).length;
+  if(STATE.custFilter==='owing') customers = customers.filter(c=>(c.balance||0)>0);
+  else if(STATE.custFilter==='paid') customers = customers.filter(c=>(c.balance||0)<=0);
+
   view.innerHTML = `
     <div class="section row"><h1>Customers</h1></div>
     <div class="searchbar"><input id="custSearchInput" placeholder="Search customers" value="${escapeHtml(STATE.custSearch||'')}"></div>
+    <div class="pill-row section">
+      <button class="customer-pill cust-filter-pill ${STATE.custFilter==='all'?'active':''}" data-v="all">All (${totalCount})</button>
+      <button class="customer-pill cust-filter-pill ${STATE.custFilter==='owing'?'active':''}" data-v="owing">Owing (${owingCount})</button>
+      <button class="customer-pill cust-filter-pill ${STATE.custFilter==='paid'?'active':''}" data-v="paid">Paid up (${paidCount})</button>
+    </div>
     <div class="list-card section">
-      ${customers.length===0? '<div class="empty">No customers yet.</div>' : customers.map(c=>`
+      ${customers.length===0? '<div class="empty">No customers in this view.</div>' : customers.map(c=>`
         <div class="list-item" data-id="${c.id}" style="cursor:pointer;">
           <div class="li-main"><div class="li-title">${escapeHtml(c.name)}</div><div class="li-sub">${escapeHtml(c.phone||'')}${c.island? ' · '+escapeHtml(c.island):''}</div></div>
-          <div class="li-right"><div class="li-amount num" style="color:${(c.balance||0)>0?'var(--danger)':'var(--good)'}">${fmtMoney(c.balance||0)}</div><div class="li-sub">balance</div></div>
+          <div class="li-right"><div class="li-amount num" style="color:${(c.balance||0)>0?'var(--danger)':'var(--good)'}">${fmtMoney(c.balance||0)}</div><div class="li-sub">${(c.balance||0)>0?'owing':'paid up'}</div></div>
         </div>`).join('')}
     </div>
     <button class="btn btn-primary btn-lg btn-block" id="newCustBtn">+ New Customer</button>
   `;
   $('#custSearchInput').addEventListener('input', e=>{ STATE.custSearch = e.target.value; renderCustomers(view); });
+  $$('.cust-filter-pill', view).forEach(b=> b.addEventListener('click', ()=>{ STATE.custFilter = b.dataset.v; renderCustomers(view); }));
   $$('.list-item', view).forEach(li=> li.addEventListener('click', ()=> go('customerDetail', {customerId:Number(li.dataset.id)})));
   $('#newCustBtn').addEventListener('click', ()=> openCustomerForm());
 }
