@@ -363,13 +363,13 @@ function onRowTap(li, fn){
 }
 
 function attachSwipeDelete(li, onDelete, opts={}){
-  const REVEAL = 84;
+  const REVEAL = 60;
   const inner = document.createElement('div');
   inner.className = 'swipe-inner';
   while(li.firstChild) inner.appendChild(li.firstChild);
   const delBtn = document.createElement('button');
   delBtn.className = 'swipe-delete-btn';
-  delBtn.innerHTML = icon('trash',17) + `<span>${opts.label||'Delete'}</span>`;
+  delBtn.innerHTML = icon('trash',16);
   li.appendChild(inner);
   li.appendChild(delBtn);
   li.classList.add('swipe-row');
