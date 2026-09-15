@@ -60,6 +60,7 @@ input,select,textarea{font-family:inherit;}
 .splash-title{font-family:var(--serif); font-size:22px; letter-spacing:0.06em; font-weight:600;}
 
 #app{display:flex; flex-direction:column; height:100vh; height:100dvh;}
+#app[hidden]{display:none;}
 
 .topbar{
   display:flex; align-items:center; justify-content:space-between;
@@ -178,6 +179,7 @@ h3{font-size:15px; font-weight:600;}
 
 /* ---- sheet (modal) ---- */
 .sheet-overlay{position:fixed; inset:0; background:rgba(7,20,28,0.45); z-index:200; display:flex; align-items:flex-end;}
+.sheet-overlay[hidden]{display:none;}
 .sheet{
   background:var(--bg); width:100%; max-height:92vh; overflow-y:auto;
   border-radius:22px 22px 0 0; padding:18px 18px calc(24px + env(safe-area-inset-bottom));
