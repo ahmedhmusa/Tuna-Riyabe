@@ -626,7 +626,6 @@ async function clearAllData(){
   await db.productionBatches.clear(); await db.expenses.clear(); await db.products.clear();
   await db.auditLogs.clear();
   await saveSettings({ freshTunaStock: 0 });
-  await seedProductsIfEmpty();
 }
 
 /* ============================================================
@@ -2258,7 +2257,7 @@ async function renderProducts(view){
   $('#newProdBtn').addEventListener('click', ()=> openProductForm(null));
 }
 
-async function openProductForm(productId){
+async function openProductForm(productId, defaultType){
   const p = productId ? await db.products.get(productId) : null;
   const sheet = $('#sheet');
   sheet.innerHTML = `
@@ -2268,8 +2267,8 @@ async function openProductForm(productId){
     <div class="field"><label>SKU</label><input id="prSku" value="${escapeHtml(p?.sku||'')}"></div>
     <div class="field"><label>Type</label>
       <div class="seg" id="prType">
-        <button data-v="dried" class="${!p || p.type==='dried'?'active':''}">Dried Tuna</button>
-        <button data-v="rihaakuru" class="${p?.type==='rihaakuru'?'active':''}">Rihaakuru</button>
+        <button data-v="dried" class="${(p?.type||defaultType||'dried')==='dried'?'active':''}">Dried Tuna</button>
+        <button data-v="rihaakuru" class="${(p?.type||defaultType)==='rihaakuru'?'active':''}">Rihaakuru</button>
       </div>
     </div>
     <div class="field"><label>Pack size (kg)</label><input type="number" step="0.01" id="prSize" value="${p?.packSize||''}"></div>
@@ -2283,7 +2282,7 @@ async function openProductForm(productId){
     <button class="btn btn-primary btn-lg btn-block" id="prSave">${p?'Save Changes':'Add Product'}</button>
   `;
   openSheet();
-  let type = p?.type || 'dried';
+  let type = p?.type || defaultType || 'dried';
   let activeState = p ? (p.active!==false) : true;
   $('#prClose').onclick = closeSheet;
   $('#prType').addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; $$('#prType button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); type=b.dataset.v; });
@@ -2339,7 +2338,11 @@ async function renderProduction(view){
 
 async function openProductionForm(kind){
   const products = (await db.products.toArray()).filter(p=>p.type===kind && p.active!==false);
-  if(!products.length){ toast('Add a product for this type first'); return; }
+  if(!products.length){
+    toast(`Add a ${kind==='dried'?'Dried Tuna':'Rihaakuru'} product first`);
+    openProductForm(null, kind);
+    return;
+  }
   const lots = await remainingFreshTunaLots();
   const totalRemaining = Math.round(lots.reduce((a,l)=>a+l.remainingKg,0)*1000)/1000;
   const sheet = $('#sheet');
@@ -3013,7 +3016,6 @@ async function boot(){
     // per-read delay by the number of tables.
     await Promise.all(TABLE_NAMES.map(n => db[n]._load().catch(()=>{})));
     await loadSettings();
-    if(SETTINGS) await seedProductsIfEmpty();
 
     // Remove the splash BEFORE anything that waits on the user, otherwise the
     // full-screen splash covers the setup wizard and blocks its buttons.
@@ -3024,7 +3026,8 @@ async function boot(){
     if(!SETTINGS){
       // No setup form — go straight to a working dashboard with sensible
       // defaults. Business name, island, phone, and currency can all be
-      // changed anytime from More → Settings.
+      // changed anytime from More → Settings. Products start empty —
+      // add exactly the pack sizes you sell from More → Products.
       await db.settings.put({
         id:1, businessName:'Island Tuna', island:'', phone:'', address:'',
         currency:'MVR', theme:'light', defaultFreshPrice:90, freshTunaStock:0,
@@ -3032,7 +3035,6 @@ async function boot(){
         demoMode:false, lastBackup:null
       });
       await loadSettings();
-      await seedProductsIfEmpty();
     }
     applyTheme();
     $('#bizNameTop').textContent = SETTINGS.businessName || 'ISLAND TUNA';
