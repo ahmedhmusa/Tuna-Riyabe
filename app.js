@@ -219,7 +219,7 @@ class ShimTable{
   }
 }
 
-const TABLE_NAMES = ['settings','customers','suppliers','products','sales','payments','customerTx','purchases','supplierPayments','supplierTx','inventoryTx','productionBatches','expenses','auditLogs'];
+const TABLE_NAMES = ['settings','customers','suppliers','products','sales','payments','customerTx','purchases','supplierPayments','supplierTx','inventoryTx','productionBatches','expenses','staff','staffPayments','auditLogs'];
 const db = {};
 for(const name of TABLE_NAMES) db[name] = new ShimTable(name);
 db.transaction = async (mode, tables, fn) => fn(); // no real atomicity needed for this app's usage
@@ -289,7 +289,9 @@ const ICONS = {
   hourglass:'<path d="M6.5 3h11"/><path d="M6.5 21h11"/><path d="M7.5 3c0 5 4.2 6.3 4.5 9-0.3 2.7-4.5 4-4.5 9"/><path d="M16.5 3c0 5-4.2 6.3-4.5 9 0.3 2.7 4.5 4 4.5 9"/>',
   x:        '<line x1="5.5" y1="5.5" x2="18.5" y2="18.5"/><line x1="18.5" y1="5.5" x2="5.5" y2="18.5"/>',
   lock:     '<rect x="5" y="10.5" width="14" height="10" rx="1.8"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
-  trash:    '<path d="M4.5 6.5h15"/><path d="M9 6.5V4.8a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V6.5"/><path d="M6.5 6.5l.9 13.2a1.4 1.4 0 0 0 1.4 1.3h6.4a1.4 1.4 0 0 0 1.4-1.3l.9-13.2"/><line x1="10" y1="10.3" x2="10.3" y2="17"/><line x1="14" y1="10.3" x2="13.7" y2="17"/>'
+  trash:    '<path d="M4.5 6.5h15"/><path d="M9 6.5V4.8a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V6.5"/><path d="M6.5 6.5l.9 13.2a1.4 1.4 0 0 0 1.4 1.3h6.4a1.4 1.4 0 0 0 1.4-1.3l.9-13.2"/><line x1="10" y1="10.3" x2="10.3" y2="17"/><line x1="14" y1="10.3" x2="13.7" y2="17"/>',
+  badge:    '<rect x="4" y="3.5" width="16" height="17" rx="2"/><circle cx="12" cy="10.3" r="2.4"/><path d="M7.8,17.2c0.6-2 2.2-3.2 4.2-3.2s3.6,1.2 4.2,3.2"/>',
+  document: '<path d="M7,3h7l4,4v14H7z"/><path d="M14,3v4h4"/><line x1="9.3" y1="11.5" x2="14.7" y2="11.5"/><line x1="9.3" y1="14.7" x2="14.7" y2="14.7"/><line x1="9.3" y1="17.9" x2="12.5" y2="17.9"/>'
 };
 function icon(name, size){
   const s = ICONS[name];
@@ -1001,6 +1003,8 @@ function renderView(){
     case 'customerDetail': return renderCustomerDetail(view, STATE.customerId);
     case 'suppliers': return renderSuppliers(view);
     case 'supplierDetail': return renderSupplierDetail(view, STATE.supplierId);
+    case 'staff': return renderStaff(view);
+    case 'staffDetail': return renderStaffDetail(view, STATE.staffId);
     case 'credit': return renderCreditDashboard(view);
     case 'reports': return renderReports(view);
     case 'products': return renderProducts(view);
@@ -1388,6 +1392,12 @@ async function openSaleDetail(id){
         <div class="row"><span style="color:var(--muted)">Status</span><span class="badge badge-${s.status}">${s.status.toUpperCase()}</span></div>
         ${s.notes? `<div class="row"><span style="color:var(--muted)">Notes</span><span>${escapeHtml(s.notes)}</span></div>`:''}
       </div>
+      ${!s.voided ? `
+        <div class="quick-grid" style="margin-top:16px;">
+          <button class="quick-btn" id="sdShareSlip"><span class="qicon">${icon('document')}</span>Share Sales Slip</button>
+          <button class="quick-btn" id="sdViber"><span class="qicon">${icon('share')}</span>Send via Viber</button>
+        </div>
+      ` : ''}
       ${s.voided ? '<div class="warn-banner" style="margin-top:16px;"><div class="wtitle">This sale was voided</div></div>' : `
         ${s.balance>0 && s.customerId ? `
           <div class="divider"></div>
@@ -1402,6 +1412,8 @@ async function openSaleDetail(id){
       `}
     `;
     $('#sdClose').onclick = closeSheet;
+    $('#sdShareSlip')?.addEventListener('click', ()=> shareSalesSlip(s));
+    $('#sdViber')?.addEventListener('click', ()=> shareSlipViaViber(s));
     $('#sdMarkPaid')?.addEventListener('click', async ()=>{
       try{
         await recordSalePayment(id, s.balance);
@@ -1725,6 +1737,59 @@ function shareReminder(cust){
   }
 }
 
+/* ============================================================
+   SALES SLIPS — plain-text receipts customers can be sent
+   directly, including a one-tap "Send via Viber" shortcut.
+   ============================================================ */
+function buildSalesSlipText(sale){
+  const biz = SETTINGS.businessName || 'Island Tuna';
+  const lines = [];
+  lines.push(biz.toUpperCase());
+  if(SETTINGS.island) lines.push(SETTINGS.island);
+  lines.push('');
+  lines.push(sale.saleNo);
+  lines.push(fmtDateTime(sale.date));
+  lines.push(`Customer: ${sale.customerName || 'Walk-in'}`);
+  lines.push('');
+  if(sale.items && sale.items.length){
+    for(const it of sale.items){
+      const qtyLabel = it.kind==='fresh' ? `${it.qty} kg` : `${it.qty} ×`;
+      lines.push(`${it.name}  ${qtyLabel} @ ${fmtMoney(it.unitPrice)} = ${fmtMoney(it.qty*it.unitPrice)}`);
+    }
+  } else {
+    lines.push(`Fresh Tuna  ${fmtKg(sale.weightKg)} @ ${fmtMoney(sale.pricePerKg)}/kg`);
+  }
+  if(sale.discount) lines.push(`Discount: -${fmtMoney(sale.discount)}`);
+  lines.push('');
+  lines.push(`Total: ${fmtMoney(sale.total)}`);
+  lines.push(`Paid: ${fmtMoney(sale.paid)}`);
+  if(sale.balance>0) lines.push(`Balance due: ${fmtMoney(sale.balance)}`);
+  lines.push('');
+  lines.push('Thank you for your business!');
+  return lines.join('\n');
+}
+
+function shareSalesSlip(sale){
+  const text = buildSalesSlipText(sale);
+  if(navigator.share){
+    navigator.share({ text, title: `${SETTINGS.businessName||'Island Tuna'} — ${sale.saleNo}` }).catch(()=>{});
+  } else {
+    navigator.clipboard?.writeText(text);
+    toast('Sales slip copied to clipboard');
+  }
+}
+
+/** Opens Viber directly with the slip text ready to send to a chosen contact.
+    Also copies the text to the clipboard as a fallback, since there's no
+    reliable way to detect whether Viber is actually installed. */
+function shareSlipViaViber(sale){
+  const text = buildSalesSlipText(sale);
+  navigator.clipboard?.writeText(text).catch(()=>{});
+  const url = 'viber://forward?text=' + encodeURIComponent(text);
+  window.location.href = url;
+  toast('Opening Viber… (slip also copied, just in case)');
+}
+
 function openCustomerEditForm(cust){
   const sheet = $('#sheet');
   sheet.innerHTML = `
@@ -1842,6 +1907,173 @@ function openSupplierPaymentForm(sup){
     if(!(amount>0)){ toast('Enter an amount'); return; }
     await recordSupplierPayment({ supplierId: sup.id, amount, method, date: nowISO() });
     closeSheet(); renderView();
+  };
+}
+
+/* ============================================================
+   STAFF & SALARIES
+   ============================================================ */
+async function renderStaff(view){
+  const staff = await db.staff.orderBy('name').toArray();
+  const payments = await db.staffPayments.toArray();
+  const now = new Date();
+  const monthPaidByStaff = {};
+  for(const p of payments){
+    const d = new Date(p.date);
+    if(d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear()){
+      monthPaidByStaff[p.staffId] = (monthPaidByStaff[p.staffId]||0) + p.amount;
+    }
+  }
+  const totalMonthlySalary = staff.filter(s=>s.active!==false).reduce((a,s)=>a+(s.monthlySalary||0),0);
+  const totalPaidThisMonth = Object.values(monthPaidByStaff).reduce((a,v)=>a+v,0);
+  view.innerHTML = `
+    <button class="link-btn" id="backBtn">‹ More</button>
+    <div class="section row" style="margin-top:10px;"><h1>Staff & Salaries</h1></div>
+    <div class="grid2 section">
+      <div class="card stat-card"><div class="label">Monthly Payroll</div><div class="value num" style="font-size:18px;">${fmtMoney(totalMonthlySalary)}</div><div class="sub">${staff.filter(s=>s.active!==false).length} active staff</div></div>
+      <div class="card stat-card"><div class="label">Paid This Month</div><div class="value num" style="font-size:18px;">${fmtMoney(totalPaidThisMonth)}</div></div>
+    </div>
+    <div class="list-card section">
+      ${staff.length===0? '<div class="empty">No staff added yet.</div>' : staff.map(s=>`
+        <div class="list-item" data-id="${s.id}" style="cursor:pointer; ${s.active===false?'opacity:0.5;':''}">
+          <div class="li-main"><div class="li-title">${escapeHtml(s.name)}</div><div class="li-sub">${escapeHtml(s.role||'')}${s.phone?' · '+escapeHtml(s.phone):''}</div></div>
+          <div class="li-right"><div class="li-amount num">${fmtMoney(s.monthlySalary||0)}</div><div class="li-sub">${fmtMoney(monthPaidByStaff[s.id]||0)} paid this month</div></div>
+        </div>`).join('')}
+    </div>
+    <button class="btn btn-primary btn-lg btn-block" id="newStaffBtn">+ New Staff</button>
+  `;
+  $('#backBtn').addEventListener('click', ()=> go('more'));
+  $$('.list-item', view).forEach(li=> li.addEventListener('click', ()=> go('staffDetail', {staffId:Number(li.dataset.id)})));
+  $('#newStaffBtn').addEventListener('click', ()=> openStaffForm());
+}
+
+function openStaffForm(onSaved){
+  const sheet = $('#sheet');
+  sheet.innerHTML = `
+    <div class="sheet-handle"></div>
+    <div class="sheet-header"><h2>New Staff</h2><button class="sheet-close" id="stClose">${icon('x',16)}</button></div>
+    <div class="field"><label>Name *</label><input id="stName" autofocus></div>
+    <div class="field"><label>Role / position</label><input id="stRole" placeholder="e.g. Boat crew, Shop assistant"></div>
+    <div class="field"><label>Phone</label><input id="stPhone" inputmode="tel"></div>
+    <div class="field"><label>Monthly salary (${SETTINGS.currency})</label><input type="number" step="0.01" id="stSalary" placeholder="0"></div>
+    <div class="field"><label>Notes</label><input id="stNotes"></div>
+    <button class="btn btn-primary btn-lg btn-block" id="stSave">Save Staff</button>
+  `;
+  openSheet();
+  $('#stClose').onclick = closeSheet;
+  $('#stSave').onclick = async ()=>{
+    const name = $('#stName').value.trim();
+    if(!name){ toast('Enter a name'); return; }
+    const id = await db.staff.add({
+      name, role: $('#stRole').value.trim(), phone: $('#stPhone').value.trim(),
+      monthlySalary: Number($('#stSalary').value||0), notes: $('#stNotes').value.trim(),
+      active:true, createdAt: nowISO()
+    });
+    await audit('create','staff',id,name);
+    toast('Staff added'); closeSheet();
+    const s = await db.staff.get(id);
+    if(onSaved) onSaved(s); else renderView();
+  };
+}
+
+async function renderStaffDetail(view, staffId){
+  const s = await db.staff.get(staffId);
+  if(!s){ go('staff'); return; }
+  const payments = (await db.staffPayments.where('staffId').equals(staffId).toArray()).sort((a,b)=> new Date(b.date)-new Date(a.date));
+  const now = new Date();
+  const paidThisMonth = payments.filter(p=>{ const d=new Date(p.date); return d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear(); }).reduce((a,p)=>a+p.amount,0);
+  const paidAllTime = payments.reduce((a,p)=>a+p.amount,0);
+  const lastPaid = payments[0];
+  view.innerHTML = `
+    <button class="link-btn" id="backBtn">‹ Staff & Salaries</button>
+    <div class="section" style="margin-top:10px;">
+      <h1>${escapeHtml(s.name)}</h1>
+      <div style="color:var(--muted); font-size:13.5px; margin-top:2px;">${escapeHtml(s.role||'')}${s.phone? ' · '+escapeHtml(s.phone):''}</div>
+    </div>
+    <div class="hero-card section">
+      <div class="label">Monthly Salary</div>
+      <div class="value num">${fmtMoney(s.monthlySalary||0)}</div>
+      <div class="sub">${fmtMoney(paidThisMonth)} paid this month</div>
+    </div>
+    <div class="grid2 section">
+      <div class="card stat-card"><div class="label">Paid All-Time</div><div class="value num" style="font-size:18px;">${fmtMoney(paidAllTime)}</div></div>
+      <div class="card stat-card"><div class="label">Last Paid</div><div class="value num" style="font-size:15px;">${lastPaid? fmtDate(lastPaid.date):'—'}</div></div>
+    </div>
+    <div class="quick-grid section">
+      <button class="quick-btn" id="stdPay"><span class="qicon">${icon('card')}</span>Record Payment</button>
+      <button class="quick-btn" id="stdEdit"><span class="qicon">${icon('edit')}</span>Edit Staff</button>
+    </div>
+    <h2 class="section">Payment History</h2>
+    <div class="list-card section">
+      ${payments.length===0? '<div class="empty">No payments recorded yet.</div>' : payments.map(p=>`
+        <div class="list-item">
+          <div class="li-main"><div class="li-title">${p.periodLabel? escapeHtml(p.periodLabel) : 'Salary payment'}</div><div class="li-sub">${fmtDateTime(p.date)}${p.notes? ' · '+escapeHtml(p.notes):''}</div></div>
+          <div class="li-right"><div class="li-amount num" style="color:var(--good)">${fmtMoney(p.amount)}</div><div class="li-sub">${p.method||''}</div></div>
+        </div>`).join('')}
+    </div>
+  `;
+  $('#backBtn').addEventListener('click', ()=> go('staff'));
+  $('#stdPay').addEventListener('click', ()=> openStaffPaymentForm(s));
+  $('#stdEdit').addEventListener('click', ()=> openStaffEditForm(s));
+}
+
+function openStaffPaymentForm(s){
+  const sheet = $('#sheet');
+  const monthLabel = new Date().toLocaleDateString(undefined,{month:'long', year:'numeric'});
+  sheet.innerHTML = `
+    <div class="sheet-handle"></div>
+    <div class="sheet-header"><h2>Pay ${escapeHtml(s.name)}</h2><button class="sheet-close" id="spyClose">${icon('x',16)}</button></div>
+    <div class="field"><label>Amount (${SETTINGS.currency})</label><input type="number" step="0.01" id="spyAmt" value="${s.monthlySalary||''}"></div>
+    <div class="field"><label>For period</label><input id="spyPeriod" value="${monthLabel}"></div>
+    <div class="field">
+      <label>Payment method</label>
+      <div class="seg" id="spyMethod"><button data-v="cash" class="active">Cash</button><button data-v="bank">Bank/Online</button><button data-v="other">Other</button></div>
+    </div>
+    <div class="field"><label>Notes (optional)</label><input id="spyNotes"></div>
+    <button class="btn btn-primary btn-lg btn-block" id="spySave">Save Payment</button>
+  `;
+  openSheet();
+  let method = 'cash';
+  $('#spyClose').onclick = closeSheet;
+  $('#spyMethod').addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; $$('#spyMethod button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); method=b.dataset.v; });
+  $('#spySave').onclick = async ()=>{
+    const amount = Number($('#spyAmt').value);
+    if(!(amount>0)){ toast('Enter a payment amount'); return; }
+    const id = await db.staffPayments.add({
+      staffId: s.id, amount, method, periodLabel: $('#spyPeriod').value.trim(),
+      notes: $('#spyNotes').value.trim(), date: nowISO(), createdAt: nowISO()
+    });
+    await audit('create','staffPayment',id, `${fmtMoney(amount)} to ${s.name}`);
+    toast('Payment recorded'); closeSheet(); renderView();
+  };
+}
+
+function openStaffEditForm(s){
+  const sheet = $('#sheet');
+  sheet.innerHTML = `
+    <div class="sheet-handle"></div>
+    <div class="sheet-header"><h2>Edit Staff</h2><button class="sheet-close" id="seClose">${icon('x',16)}</button></div>
+    <div class="field"><label>Name</label><input id="seName" value="${escapeHtml(s.name)}"></div>
+    <div class="field"><label>Role / position</label><input id="seRole" value="${escapeHtml(s.role||'')}"></div>
+    <div class="field"><label>Phone</label><input id="sePhone" value="${escapeHtml(s.phone||'')}"></div>
+    <div class="field"><label>Monthly salary (${SETTINGS.currency})</label><input type="number" step="0.01" id="seSalary" value="${s.monthlySalary||0}"></div>
+    <div class="field"><label>Notes</label><input id="seNotes" value="${escapeHtml(s.notes||'')}"></div>
+    <div class="field">
+      <label>Status</label>
+      <div class="seg" id="seActive"><button data-v="1" class="${s.active!==false?'active':''}">Active</button><button data-v="0" class="${s.active===false?'active':''}">Inactive</button></div>
+    </div>
+    <button class="btn btn-primary btn-lg btn-block" id="seSave">Save Changes</button>
+  `;
+  openSheet();
+  let active = s.active!==false;
+  $('#seClose').onclick = closeSheet;
+  $('#seActive').addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; $$('#seActive button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); active = b.dataset.v==='1'; });
+  $('#seSave').onclick = async ()=>{
+    await db.staff.update(s.id, {
+      name: $('#seName').value.trim(), role: $('#seRole').value.trim(), phone: $('#sePhone').value.trim(),
+      monthlySalary: Number($('#seSalary').value||0), notes: $('#seNotes').value.trim(), active
+    });
+    toast('Staff updated'); closeSheet(); renderView();
   };
 }
 
@@ -2288,7 +2520,7 @@ async function openGeneralSale(){
 }
 function renderMore(view){
   const items = [
-    ['customers','users','Customers'], ['suppliers','anchor','Suppliers / Fishermen'], ['credit','card','Credit'],
+    ['customers','users','Customers'], ['suppliers','anchor','Suppliers / Fishermen'], ['staff','badge','Staff & Salaries'], ['credit','card','Credit'],
     ['production','factory','Production'], ['expenses','receipt','Expenses'], ['reports','chart','Reports'],
     ['products','tag','Products'], ['backup','save','Backup & Restore'], ['settings','gear','Settings']
   ];
