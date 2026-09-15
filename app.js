@@ -21,7 +21,7 @@ function showFatalError(msg){
     }
     const backend = (typeof StorageBackend !== 'undefined' && StorageBackend) ? StorageBackend.kind : 'not initialised';
     el.innerHTML =
-      '<div style="font-size:36px;">⚠️</div>' +
+      '<div><svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.3l9.3 16.2H2.7L12 3.3z"/><line x1="12" y1="9.5" x2="12" y2="13.8"/><circle cx="12" cy="16.6" r=".95" fill="currentColor" stroke="none"/></svg></div>' +
       '<div style="font-family:sans-serif;font-size:14px;max-width:300px;text-align:center;line-height:1.5;padding:0 20px;">' +
       'The app hit a problem while starting:<br><br>' +
       '<code style="font-size:12px; opacity:0.9; word-break:break-word;">' + String(msg).replace(/</g,'&lt;') + '</code>' +
@@ -260,6 +260,48 @@ function toast(msg, ms=2200){
 }
 function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+/* ============================================================
+   ICONS — small original line-icon set (24x24, stroke-based)
+   replacing emoji throughout the app for a cleaner, consistent look.
+   ============================================================ */
+const ICONS = {
+  home:     '<path d="M4 11L12 4l8 7"/><path d="M6 10v9a1 1 0 0 0 1 1h3v-6h4v6h3a1 1 0 0 0 1-1v-9"/>',
+  trending: '<polyline points="3,17 9,11 13,15 21,7"/><polyline points="15,7 21,7 21,13"/>',
+  anchor:   '<circle cx="12" cy="5" r="2"/><line x1="12" y1="7" x2="12" y2="21"/><path d="M5 12a7 7 0 0 0 14 0"/><line x1="5" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="19" y2="12"/>',
+  package:  '<path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><line x1="12" y1="13" x2="12" y2="21"/>',
+  dots:     '<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  fish:     '<path d="M3 12c3-4.2 8-6.2 13-5.2 3 .6 5 2.6 5 5.2s-2 4.6-5 5.2c-5 1-10-1-13-5.2z"/><path d="M17 9l4-3v6z"/><circle cx="7.3" cy="11" r=".9" fill="currentColor" stroke="none"/>',
+  jar:      '<path d="M8 3.5h8"/><path d="M9 3.5L8 7h8l-1-3.5"/><path d="M6 7h12v11a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 6 18V7z"/>',
+  card:     '<rect x="2" y="5" width="20" height="14" rx="2.2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="5.5" y1="15" x2="9.5" y2="15"/>',
+  alert:    '<path d="M12 3.3l9.3 16.2H2.7L12 3.3z"/><line x1="12" y1="9.5" x2="12" y2="13.8"/><circle cx="12" cy="16.6" r=".95" fill="currentColor" stroke="none"/>',
+  receipt:  '<path d="M6 3h12v18l-2-1.2-2 1.2-2-1.2-2 1.2-2-1.2-2 1.2V3z"/><line x1="8.5" y1="7.5" x2="15.5" y2="7.5"/><line x1="8.5" y1="11.5" x2="15.5" y2="11.5"/><line x1="8.5" y1="15.5" x2="13" y2="15.5"/>',
+  chart:    '<line x1="4" y1="20" x2="20" y2="20"/><rect x="6" y="12" width="3.2" height="8"/><rect x="10.4" y="7.5" width="3.2" height="12.5"/><rect x="14.8" y="4" width="3.2" height="16"/>',
+  basket:   '<path d="M4 9h16l-1.4 9.6a2.1 2.1 0 0 1-2.1 1.8H7.5a2.1 2.1 0 0 1-2.1-1.8L4 9z"/><path d="M8.2 9l1-4.2"/><path d="M15.8 9l-1-4.2"/><line x1="12" y1="12.2" x2="12" y2="16.8"/>',
+  factory:  '<path d="M3 21V10.5l5.5 3.8v-3.8l5.5 3.8v-3.8l5.5 3.8V21H3z"/><line x1="3" y1="21" x2="21" y2="21"/><line x1="7" y1="7.5" x2="7" y2="10.5" />',
+  users:    '<circle cx="9" cy="8" r="3"/><path d="M3.2 20c0-3.3 2.6-6 5.8-6s5.8 2.7 5.8 6"/><circle cx="17.2" cy="9" r="2.3"/><path d="M15.6 13.3c2.6.3 4.6 2.7 4.6 5.4"/>',
+  arrow:    '<line x1="4" y1="12" x2="18.5" y2="12"/><polyline points="13.5,6.5 19.5,12 13.5,17.5"/>',
+  share:    '<path d="M12 3.2v11.3"/><path d="M8 7.3l4-4.1 4 4.1"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>',
+  edit:     '<path d="M4 20l.8-3.7L16 5a1.6 1.6 0 0 1 2.3 0l0.7.7a1.6 1.6 0 0 1 0 2.3L8 19.2 4 20z"/><line x1="14.6" y1="6.4" x2="17.6" y2="9.4"/>',
+  check:    '<circle cx="12" cy="12" r="9"/><polyline points="8,12.4 11,15.4 16,9"/>',
+  tag:      '<path d="M12 2.3h5.7a2 2 0 0 1 2 2v5.7L10.2 19.5a2 2 0 0 1-2.8 0l-4.9-4.9a2 2 0 0 1 0-2.8L12 2.3z"/><circle cx="15.3" cy="7.7" r="1.3" fill="currentColor" stroke="none"/>',
+  save:     '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4"/><rect x="8" y="14" width="8" height="5"/>',
+  gear:     '<circle cx="12" cy="12" r="3.1"/><path d="M19.4 13.4a7.7 7.7 0 0 0 0-2.8l1.9-1.5-2-3.4-2.3.9a7.9 7.9 0 0 0-2.4-1.4L14.2 3H9.8l-.4 2.2a7.9 7.9 0 0 0-2.4 1.4l-2.3-.9-2 3.4 1.9 1.5a7.7 7.7 0 0 0 0 2.8l-1.9 1.5 2 3.4 2.3-.9a7.9 7.9 0 0 0 2.4 1.4l.4 2.2h4.4l.4-2.2a7.9 7.9 0 0 0 2.4-1.4l2.3.9 2-3.4z"/>',
+  hourglass:'<path d="M6.5 3h11"/><path d="M6.5 21h11"/><path d="M7.5 3c0 5 4.2 6.3 4.5 9-0.3 2.7-4.5 4-4.5 9"/><path d="M16.5 3c0 5-4.2 6.3-4.5 9 0.3 2.7 4.5 4 4.5 9"/>',
+  x:        '<line x1="5.5" y1="5.5" x2="18.5" y2="18.5"/><line x1="18.5" y1="5.5" x2="5.5" y2="18.5"/>',
+  lock:     '<rect x="5" y="10.5" width="14" height="10" rx="1.8"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>'
+};
+function icon(name, size){
+  const s = ICONS[name];
+  if(!s) return '';
+  const px = size || 18;
+  return `<svg viewBox="0 0 24 24" width="${px}" height="${px}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-4px; flex-shrink:0;" aria-hidden="true">${s}</svg>`;
+}
+// Populate any static placeholders already in the DOM (splash, nav bar, lock button)
+// as soon as this script runs — no need to wait for boot(), the markup already exists.
+document.querySelectorAll('[data-icon]').forEach(el=>{
+  el.innerHTML = icon(el.dataset.icon, Number(el.dataset.iconSize)||20);
+});
+
 async function audit(action, entity, entityId, details){
   await db.auditLogs.add({ date: nowISO(), action, entity, entityId, details: details||'' });
 }
@@ -329,7 +371,7 @@ async function firstRunWizard(){
       if(step===0){
         html = `
           <div style="min-height:80vh; display:flex; flex-direction:column; justify-content:center; gap:22px; max-width:420px; margin:0 auto;">
-            <div style="font-size:44px; text-align:center;">🐟</div>
+            <div style="text-align:center;">${icon('fish',44)}</div>
             <h1 style="text-align:center;">Welcome to Island Tuna</h1>
             <p style="text-align:center; color:var(--muted); font-size:15px;">Let's set up your business. This takes a minute — everything stays on this device.</p>
             <div class="field"><label>Business name</label><input id="fBiz" value="${escapeHtml(data.businessName)}"></div>
@@ -341,7 +383,7 @@ async function firstRunWizard(){
       } else {
         html = `
           <div style="min-height:80vh; display:flex; flex-direction:column; justify-content:center; gap:18px; max-width:420px; margin:0 auto;">
-            <div style="font-size:40px; text-align:center;">📊</div>
+            <div style="text-align:center;">${icon('chart',40)}</div>
             <h1 style="text-align:center;">Load sample data?</h1>
             <p style="text-align:center; color:var(--muted); font-size:15px;">Demo mode fills the app with example customers, sales and stock so you can explore it. You can clear it anytime from Settings.</p>
             <button class="btn btn-primary btn-lg btn-block" id="wizDemo">Yes — Demo Mode</button>
@@ -369,7 +411,7 @@ async function firstRunWizard(){
     async function finish(demo){
       const view = $('#view');
       view.innerHTML = `<div style="min-height:70vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;">
-        <div style="font-size:36px;">🐟</div>
+        <div>${icon('fish',36)}</div>
         <div style="font-family:sans-serif; color:var(--muted); font-size:14px;">${demo? 'Preparing your sample data…' : 'Setting things up…'}</div>
       </div>`;
       await new Promise(r=> setTimeout(r, 30)); // let the screen paint before the work starts
@@ -933,19 +975,19 @@ async function renderHome(view){
     </div>
 
     <div class="section grid2">
-      <div class="card stat-card tappable" data-nav="inventory"><div class="label">🐟 Fresh Tuna</div><div class="value num">${fmtKg(SETTINGS.freshTunaStock||0)}</div>
+      <div class="card stat-card tappable" data-nav="inventory"><div class="label">${icon('fish')} Fresh Tuna</div><div class="value num">${fmtKg(SETTINGS.freshTunaStock||0)}</div>
         ${(SETTINGS.freshTunaStock||0) <= (SETTINGS.lowStockKg||10) ? '<div class="sub" style="color:var(--coral)">Low stock</div>' : '<div class="sub">In stock</div>'}</div>
-      <div class="card stat-card tappable" data-nav="inventory"><div class="label">📦 Dried Tuna</div><div class="value num">${driedPacks}</div><div class="sub">packs available</div></div>
-      <div class="card stat-card tappable" data-nav="inventory"><div class="label">🍯 Rihaakuru</div><div class="value num">${rkBottles}</div><div class="sub">bottles available</div></div>
-      <div class="card stat-card tappable" data-nav="purchases"><div class="label">🎣 Today's Purchases</div><div class="value num" style="font-size:18px;">${fmtMoney(todayPurchasesTotal)}</div><div class="sub">${todayPurchases.length} purchase${todayPurchases.length===1?'':'s'}</div></div>
-      <div class="card stat-card tappable" data-nav="expenses"><div class="label">🧾 Today's Expenses</div><div class="value num" style="font-size:18px;">${fmtMoney(todayExpensesTotal)}</div><div class="sub">${todayExpenses.length} entr${todayExpenses.length===1?'y':'ies'}</div></div>
-      <div class="card stat-card tappable" data-nav="credit"><div class="label">💳 Customer Credit</div><div class="value num" style="font-size:18px;">${fmtMoney(totalCredit)}</div><div class="sub">${custWithCredit.length} owing</div></div>
+      <div class="card stat-card tappable" data-nav="inventory"><div class="label">${icon('package')} Dried Tuna</div><div class="value num">${driedPacks}</div><div class="sub">packs available</div></div>
+      <div class="card stat-card tappable" data-nav="inventory"><div class="label">${icon('jar')} Rihaakuru</div><div class="value num">${rkBottles}</div><div class="sub">bottles available</div></div>
+      <div class="card stat-card tappable" data-nav="purchases"><div class="label">${icon('anchor')} Today's Purchases</div><div class="value num" style="font-size:18px;">${fmtMoney(todayPurchasesTotal)}</div><div class="sub">${todayPurchases.length} purchase${todayPurchases.length===1?'':'s'}</div></div>
+      <div class="card stat-card tappable" data-nav="expenses"><div class="label">${icon('receipt')} Today's Expenses</div><div class="value num" style="font-size:18px;">${fmtMoney(todayExpensesTotal)}</div><div class="sub">${todayExpenses.length} entr${todayExpenses.length===1?'y':'ies'}</div></div>
+      <div class="card stat-card tappable" data-nav="credit"><div class="label">${icon('card')} Customer Credit</div><div class="value num" style="font-size:18px;">${fmtMoney(totalCredit)}</div><div class="sub">${custWithCredit.length} owing</div></div>
     </div>
 
     ${custWithCredit.length>0 ? `
     <div class="section">
       <div class="warn-banner" id="creditWarnBanner" style="cursor:pointer;">
-        <div><div class="wtitle">⚠️ Credit requires attention</div><div class="wsub">${custWithCredit.length} customers owe you · Total ${fmtMoney(totalCredit)}</div></div>
+        <div><div class="wtitle">${icon('alert',16)} Credit requires attention</div><div class="wsub">${custWithCredit.length} customers owe you · Total ${fmtMoney(totalCredit)}</div></div>
         <span class="chev">›</span>
       </div>
     </div>` : ''}
@@ -953,21 +995,21 @@ async function renderHome(view){
     ${lowStockProducts.length>0 ? `
     <div class="section">
       <div class="warn-banner" id="lowStockBanner" style="cursor:pointer;">
-        <div><div class="wtitle">📦 Low stock</div><div class="wsub">${lowStockProducts.map(p=>escapeHtml(p.name)).slice(0,3).join(', ')}${lowStockProducts.length>3? ` +${lowStockProducts.length-3} more`:''}</div></div>
+        <div><div class="wtitle">${icon('package',16)} Low stock</div><div class="wsub">${lowStockProducts.map(p=>escapeHtml(p.name)).slice(0,3).join(', ')}${lowStockProducts.length>3? ` +${lowStockProducts.length-3} more`:''}</div></div>
         <span class="chev">›</span>
       </div>
     </div>` : ''}
 
     <div class="section">
       <h2>Quick Actions</h2>
-      <button class="btn btn-primary btn-lg btn-block" id="qaSell" style="margin-top:10px;">🐟 Sell Tuna</button>
+      <button class="btn btn-primary btn-lg btn-block" id="qaSell" style="margin-top:10px;">${icon('fish')} Sell Tuna</button>
       <div class="quick-grid">
-        <button class="quick-btn" id="qaGeneralSale"><span class="qicon">🧺</span>Multi-Item Sale</button>
-        <button class="quick-btn" id="qaPurchase"><span class="qicon">🎣</span>Record Purchase</button>
-        <button class="quick-btn" id="qaPayment"><span class="qicon">💳</span>Record Payment</button>
-        <button class="quick-btn" id="qaExpense"><span class="qicon">🧾</span>Add Expense</button>
-        <button class="quick-btn" id="qaProduction"><span class="qicon">🏭</span>Add Production</button>
-        <button class="quick-btn" id="qaCustomer"><span class="qicon">👥</span>Add Customer</button>
+        <button class="quick-btn" id="qaGeneralSale"><span class="qicon">${icon('basket')}</span>Multi-Item Sale</button>
+        <button class="quick-btn" id="qaPurchase"><span class="qicon">${icon('anchor')}</span>Record Purchase</button>
+        <button class="quick-btn" id="qaPayment"><span class="qicon">${icon('card')}</span>Record Payment</button>
+        <button class="quick-btn" id="qaExpense"><span class="qicon">${icon('receipt')}</span>Add Expense</button>
+        <button class="quick-btn" id="qaProduction"><span class="qicon">${icon('factory')}</span>Add Production</button>
+        <button class="quick-btn" id="qaCustomer"><span class="qicon">${icon('users')}</span>Add Customer</button>
       </div>
     </div>
   `;
@@ -994,7 +1036,7 @@ async function openQuickSale(){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>Fresh Tuna Sale</h2><button class="sheet-close" id="scClose">✕</button></div>
+    <div class="sheet-header"><h2>Fresh Tuna Sale</h2><button class="sheet-close" id="scClose">${icon('x',16)}</button></div>
     <div class="field">
       <label>Customer</label>
       <div class="pill-row" id="custPills">
@@ -1072,7 +1114,7 @@ async function openQuickPurchase(){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>Record Purchase</h2><button class="sheet-close" id="pcClose">✕</button></div>
+    <div class="sheet-header"><h2>Record Purchase</h2><button class="sheet-close" id="pcClose">${icon('x',16)}</button></div>
     <div class="field">
       <label>Supplier / Fisherman</label>
       <select id="pSupplier">
@@ -1129,7 +1171,7 @@ async function openPaymentPicker(){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>Record Payment</h2><button class="sheet-close" id="ppClose">✕</button></div>
+    <div class="sheet-header"><h2>Record Payment</h2><button class="sheet-close" id="ppClose">${icon('x',16)}</button></div>
     ${customers.length===0 ? '<div class="empty">No customers currently owe you money.</div>' : `
     <div class="list-card">
       ${customers.map(c=>`
@@ -1152,7 +1194,7 @@ async function openPaymentForm(customerId){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>Record Payment</h2><button class="sheet-close" id="pfClose">✕</button></div>
+    <div class="sheet-header"><h2>Record Payment</h2><button class="sheet-close" id="pfClose">${icon('x',16)}</button></div>
     <div class="card" style="margin-bottom:16px;">
       <div class="row"><span style="color:var(--muted); font-size:13.5px;">${escapeHtml(cust.name)}</span><span class="num" style="font-weight:700;">${fmtMoney(cust.balance)}</span></div>
       <div style="font-size:12px; color:var(--muted); margin-top:2px;">Outstanding balance</div>
@@ -1208,8 +1250,8 @@ async function renderSalesList(view){
           <div class="li-right"><div class="li-amount num">${fmtMoney(s.total)}</div><span class="badge badge-${s.status}">${s.status.toUpperCase()}</span></div>
         </div>`).join('')}
     </div>
-    <button class="btn btn-primary btn-lg btn-block" id="newSaleBtn" style="margin-top:6px;">🐟 Quick Fresh Tuna Sale</button>
-    <button class="btn btn-ghost btn-block" id="newMultiBtn" style="margin-top:10px;">🧺 Multi-Item Sale</button>
+    <button class="btn btn-primary btn-lg btn-block" id="newSaleBtn" style="margin-top:6px;">${icon('fish')} Quick Fresh Tuna Sale</button>
+    <button class="btn btn-ghost btn-block" id="newMultiBtn" style="margin-top:10px;">${icon('basket')} Multi-Item Sale</button>
   `;
   $('#salesSearch').addEventListener('input', e=>{ STATE.salesSearch = e.target.value; renderSalesList(view); });
   $$('.pill-filter', view).forEach(b=> b.addEventListener('click', ()=>{ STATE.salesFilter = b.dataset.v; renderSalesList(view); }));
@@ -1239,7 +1281,7 @@ async function openSaleDetail(id){
   function render(){
     sheet.innerHTML = `
       <div class="sheet-handle"></div>
-      <div class="sheet-header"><h2>${s.saleNo}</h2><button class="sheet-close" id="sdClose">✕</button></div>
+      <div class="sheet-header"><h2>${s.saleNo}</h2><button class="sheet-close" id="sdClose">${icon('x',16)}</button></div>
       <div class="stack">
         <div class="row"><span style="color:var(--muted)">Customer</span><span style="font-weight:600;">${escapeHtml(s.customerName)}</span></div>
         <div class="row"><span style="color:var(--muted)">Date</span><span>${fmtDateTime(s.date)}</span></div>
@@ -1342,14 +1384,14 @@ async function renderInventory(view){
   view.innerHTML = `
     <div class="section row"><h1>Inventory</h1></div>
     <div class="hero-card section">
-      <div class="label">🐟 Fresh Tuna Stock</div>
+      <div class="label">${icon('fish')} Fresh Tuna Stock</div>
       <div class="value num">${fmtKg(SETTINGS.freshTunaStock||0)}</div>
-      <div class="sub">${(SETTINGS.freshTunaStock||0) <= (SETTINGS.lowStockKg||10) ? '⚠️ Below low-stock threshold ('+fmtKg(SETTINGS.lowStockKg||10)+')' : 'Above low-stock threshold'}</div>
+      <div class="sub">${(SETTINGS.freshTunaStock||0) <= (SETTINGS.lowStockKg||10) ? (icon('alert',13)+' Below low-stock threshold ('+fmtKg(SETTINGS.lowStockKg||10)+')') : 'Above low-stock threshold'}</div>
     </div>
     <button class="btn btn-ghost btn-block section" id="adjBtn">+ Adjust Fresh Tuna Stock</button>
 
-    ${dried.length? `<h2 class="section">📦 Dried Tuna</h2><div class="list-card section">${stockRows(dried,'packs')}</div>`:''}
-    ${rk.length? `<h2 class="section">🍯 Rihaakuru</h2><div class="list-card section">${stockRows(rk,'bottles')}</div>`:''}
+    ${dried.length? `<h2 class="section">${icon('package')} Dried Tuna</h2><div class="list-card section">${stockRows(dried,'packs')}</div>`:''}
+    ${rk.length? `<h2 class="section">${icon('jar')} Rihaakuru</h2><div class="list-card section">${stockRows(rk,'bottles')}</div>`:''}
 
     <h2 class="section">Recent Movements</h2>
     <div class="list-card section">
@@ -1376,7 +1418,7 @@ async function openInventoryAdjustForm(){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>Manual Adjustment</h2><button class="sheet-close" id="iaClose">✕</button></div>
+    <div class="sheet-header"><h2>Manual Adjustment</h2><button class="sheet-close" id="iaClose">${icon('x',16)}</button></div>
     <div class="field">
       <label>Adjustment type</label>
       <div class="seg" id="iaType"><button data-v="add" class="active">Add stock</button><button data-v="remove">Remove / waste</button></div>
@@ -1441,7 +1483,7 @@ function openCustomerForm(onSaved){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>New Customer</h2><button class="sheet-close" id="ncClose">✕</button></div>
+    <div class="sheet-header"><h2>New Customer</h2><button class="sheet-close" id="ncClose">${icon('x',16)}</button></div>
     <div class="field"><label>Name *</label><input id="ncName" autofocus></div>
     <div class="field"><label>Phone</label><input id="ncPhone" inputmode="tel"></div>
     <div class="field"><label>Island</label><input id="ncIsland" value="${escapeHtml(SETTINGS.island||'')}"></div>
@@ -1493,10 +1535,10 @@ async function renderCustomerDetail(view, customerId){
       <div class="card stat-card"><div class="label">Last Payment</div><div class="value num" style="font-size:15px;">${lastPayment? fmtDate(lastPayment.date):'—'}</div></div>
     </div>
     <div class="quick-grid section">
-      <button class="quick-btn" id="cdSell"><span class="qicon">🐟</span>Sell Tuna</button>
-      <button class="quick-btn" id="cdPay" ${(cust.balance||0)<=0?'disabled':''} style="${(cust.balance||0)<=0?'opacity:0.5;':''}"><span class="qicon">💳</span>Record Payment</button>
-      <button class="quick-btn" id="cdRemind"><span class="qicon">📤</span>Share Reminder</button>
-      <button class="quick-btn" id="cdEdit"><span class="qicon">✏️</span>Edit Customer</button>
+      <button class="quick-btn" id="cdSell"><span class="qicon">${icon('fish')}</span>Sell Tuna</button>
+      <button class="quick-btn" id="cdPay" ${(cust.balance||0)<=0?'disabled':''} style="${(cust.balance||0)<=0?'opacity:0.5;':''}"><span class="qicon">${icon('card')}</span>Record Payment</button>
+      <button class="quick-btn" id="cdRemind"><span class="qicon">${icon('share')}</span>Share Reminder</button>
+      <button class="quick-btn" id="cdEdit"><span class="qicon">${icon('edit')}</span>Edit Customer</button>
     </div>
     <h2 class="section">Ledger</h2>
     <div class="list-card section">
@@ -1535,7 +1577,7 @@ function openCustomerEditForm(cust){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>Edit Customer</h2><button class="sheet-close" id="ecClose">✕</button></div>
+    <div class="sheet-header"><h2>Edit Customer</h2><button class="sheet-close" id="ecClose">${icon('x',16)}</button></div>
     <div class="field"><label>Name</label><input id="ecName" value="${escapeHtml(cust.name)}"></div>
     <div class="field"><label>Phone</label><input id="ecPhone" value="${escapeHtml(cust.phone||'')}"></div>
     <div class="field"><label>Island</label><input id="ecIsland" value="${escapeHtml(cust.island||'')}"></div>
@@ -1581,7 +1623,7 @@ function openSupplierForm(onSaved){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>New Supplier</h2><button class="sheet-close" id="nsClose">✕</button></div>
+    <div class="sheet-header"><h2>New Supplier</h2><button class="sheet-close" id="nsClose">${icon('x',16)}</button></div>
     <div class="field"><label>Fisherman / supplier name *</label><input id="nsName" autofocus></div>
     <div class="field"><label>Phone</label><input id="nsPhone" inputmode="tel"></div>
     <div class="field"><label>Boat name</label><input id="nsBoat"></div>
@@ -1632,7 +1674,7 @@ function openSupplierPaymentForm(sup){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>Pay ${escapeHtml(sup.name)}</h2><button class="sheet-close" id="spClose">✕</button></div>
+    <div class="sheet-header"><h2>Pay ${escapeHtml(sup.name)}</h2><button class="sheet-close" id="spClose">${icon('x',16)}</button></div>
     <div class="field"><label>Amount</label><input type="number" step="0.01" id="spAmt" value="${sup.balance}"></div>
     <div class="field"><label>Method</label>
       <div class="seg" id="spMethod"><button data-v="cash" class="active">Cash</button><button data-v="bank">Bank</button></div>
@@ -1695,7 +1737,7 @@ async function renderCreditDashboard(view){
       <button class="customer-pill sort-pill ${STATE.creditSort==='name'?'active':''}" data-v="name">Name</button>
     </div>
     <div class="list-card section">
-      ${rows.length===0? '<div class="empty">No outstanding credit. 🎉</div>' : rows.map(c=>`
+      ${rows.length===0? `<div class="empty">No outstanding credit. ${icon('check',16)}</div>` : rows.map(c=>`
         <div class="list-item" data-id="${c.id}" style="cursor:pointer;">
           <div class="li-main"><div class="li-title">${escapeHtml(c.name)}</div><div class="li-sub">Last activity ${c.age}d ago</div></div>
           <div class="li-right"><div class="li-amount num" style="color:var(--danger)">${fmtMoney(c.balance)}</div><span class="badge badge-credit">${c.age<=7?'RECENT':c.age<=30?'DUE':'OVERDUE'}</span></div>
@@ -1731,8 +1773,8 @@ async function renderProducts(view){
   view.innerHTML = `
     <button class="link-btn" id="backBtn">‹ More</button>
     <div class="section" style="margin-top:10px;"><h1>Products</h1></div>
-    ${groupHtml(dried,'🐟 Dried Tuna','packs')}
-    ${groupHtml(rk,'🍯 Rihaakuru','bottles')}
+    ${groupHtml(dried,`${icon('package')} Dried Tuna`,'packs')}
+    ${groupHtml(rk,`${icon('jar')} Rihaakuru`,'bottles')}
     <button class="btn btn-primary btn-block section" id="newProdBtn">+ New Product</button>
   `;
   $('#backBtn').addEventListener('click', ()=> go('more'));
@@ -1745,7 +1787,7 @@ async function openProductForm(productId){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>${p? 'Edit Product':'New Product'}</h2><button class="sheet-close" id="prClose">✕</button></div>
+    <div class="sheet-header"><h2>${p? 'Edit Product':'New Product'}</h2><button class="sheet-close" id="prClose">${icon('x',16)}</button></div>
     <div class="field"><label>Product name</label><input id="prName" value="${escapeHtml(p?.name||'')}"></div>
     <div class="field"><label>SKU</label><input id="prSku" value="${escapeHtml(p?.sku||'')}"></div>
     <div class="field"><label>Type</label>
@@ -1794,15 +1836,15 @@ async function renderProduction(view){
     <button class="link-btn" id="backBtn">‹ More</button>
     <div class="section" style="margin-top:10px;"><h1>Production</h1></div>
     <div class="grid2 section">
-      <button class="quick-btn" id="newDried"><span class="qicon">🐟</span>Dried Tuna Batch</button>
-      <button class="quick-btn" id="newRk"><span class="qicon">🍯</span>Rihaakuru Batch</button>
+      <button class="quick-btn" id="newDried"><span class="qicon">${icon('package')}</span>Dried Tuna Batch</button>
+      <button class="quick-btn" id="newRk"><span class="qicon">${icon('jar')}</span>Rihaakuru Batch</button>
     </div>
     <h2 class="section">Recent Batches</h2>
     <div class="list-card section">
       ${batches.length===0? '<div class="empty">No production batches yet.</div>' : batches.map(b=>`
         <div class="list-item" data-id="${b.id}" style="cursor:pointer;">
           <div class="li-main"><div class="li-title">${escapeHtml(b.productName||b.kind)}</div>
-            <div class="li-sub">${b.batchNo} · ${fmtKg(b.freshUsedKg)} → ${b.unitsProduced} units · ${fmtDate(b.date)}</div></div>
+            <div class="li-sub">${b.batchNo} · ${fmtKg(b.freshUsedKg)} ${icon('arrow',13)} ${b.unitsProduced} units · ${fmtDate(b.date)}</div></div>
           <div class="li-right"><div class="li-amount num">${fmtMoney(b.totalCost)}</div><div class="li-sub num">${fmtMoney(b.costPerUnit)}/unit</div></div>
         </div>`).join('')}
     </div>
@@ -1820,7 +1862,7 @@ async function openProductionForm(kind){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>${kind==='dried'?'Dried Tuna':'Rihaakuru'} Batch</h2><button class="sheet-close" id="pdClose">✕</button></div>
+    <div class="sheet-header"><h2>${kind==='dried'?'Dried Tuna':'Rihaakuru'} Batch</h2><button class="sheet-close" id="pdClose">${icon('x',16)}</button></div>
     <div class="field"><label>Product / pack size</label>
       <select id="pdProduct">${products.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}</select>
     </div>
@@ -1878,7 +1920,7 @@ async function openBatchDetail(id){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>${b.batchNo}</h2><button class="sheet-close" id="bdClose">✕</button></div>
+    <div class="sheet-header"><h2>${b.batchNo}</h2><button class="sheet-close" id="bdClose">${icon('x',16)}</button></div>
     <div class="stack">
       <div class="row"><span style="color:var(--muted)">Product</span><span style="font-weight:600;">${escapeHtml(b.productName)}</span></div>
       <div class="row"><span style="color:var(--muted)">Date</span><span>${fmtDateTime(b.date)}</span></div>
@@ -1941,7 +1983,7 @@ function openExpenseForm(){
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <div class="sheet-handle"></div>
-    <div class="sheet-header"><h2>Add Expense</h2><button class="sheet-close" id="exClose">✕</button></div>
+    <div class="sheet-header"><h2>Add Expense</h2><button class="sheet-close" id="exClose">${icon('x',16)}</button></div>
     <div class="field"><label>Category</label>
       <select id="exCat">${EXPENSE_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('')}</select>
     </div>
@@ -1981,7 +2023,7 @@ async function openGeneralSale(){
     const total = Math.max(0, subtotal-discount);
     sheet.innerHTML = `
       <div class="sheet-handle"></div>
-      <div class="sheet-header"><h2>New Sale</h2><button class="sheet-close" id="gClose">✕</button></div>
+      <div class="sheet-header"><h2>New Sale</h2><button class="sheet-close" id="gClose">${icon('x',16)}</button></div>
       <div class="field"><label>Customer</label>
         <div class="pill-row" id="gCustPills">
           <button class="customer-pill ${!selectedCustomer?'active':''}" data-id="">Walk-in</button>
@@ -2048,7 +2090,7 @@ async function openGeneralSale(){
          <div class="field"><label>Unit price</label><input type="number" step="0.01" id="aiPrice" value="${products[0]?.sellPrice||''}"></div>`;
     const prev = sheet.innerHTML;
     sheet.innerHTML = `<div class="sheet-handle"></div>
-      <div class="sheet-header"><h2>Add ${kind==='fresh'?'Fresh Tuna':'Item'}</h2><button class="sheet-close" id="aiClose">✕</button></div>`;
+      <div class="sheet-header"><h2>Add ${kind==='fresh'?'Fresh Tuna':'Item'}</h2><button class="sheet-close" id="aiClose">${icon('x',16)}</button></div>`;
     sheet.appendChild(inner);
     const btn = document.createElement('button');
     btn.className='btn btn-primary btn-lg btn-block'; btn.textContent='Add to Sale';
@@ -2088,16 +2130,16 @@ async function openGeneralSale(){
 }
 function renderMore(view){
   const items = [
-    ['customers','👥','Customers'], ['suppliers','🎣','Suppliers / Fishermen'], ['credit','💳','Credit'],
-    ['production','🏭','Production'], ['expenses','🧾','Expenses'], ['reports','📊','Reports'],
-    ['products','🏷️','Products'], ['backup','💾','Backup & Restore'], ['settings','⚙️','Settings']
+    ['customers','users','Customers'], ['suppliers','anchor','Suppliers / Fishermen'], ['credit','card','Credit'],
+    ['production','factory','Production'], ['expenses','receipt','Expenses'], ['reports','chart','Reports'],
+    ['products','tag','Products'], ['backup','save','Backup & Restore'], ['settings','gear','Settings']
   ];
   view.innerHTML = `
     <div class="section"><h1>More</h1></div>
     <div class="list-card settings-list">
-      ${items.map(([tab,icon,label])=>`
+      ${items.map(([tab,iconName,label])=>`
         <div class="list-item" data-tab="${tab}" style="cursor:pointer;">
-          <div class="li-main"><div class="li-title">${icon} ${label}</div></div>
+          <div class="li-main"><div class="li-title">${icon(iconName)} ${label}</div></div>
           <span class="chev">›</span>
         </div>`).join('')}
     </div>
@@ -2109,7 +2151,7 @@ function renderComingSoon(view, label){
   view.innerHTML = `
     <button class="link-btn" id="backBtn">‹ More</button>
     <div style="min-height:60vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; text-align:center;">
-      <div style="font-size:40px;">🚧</div>
+      <div>${icon('hourglass',40)}</div>
       <h2>${escapeHtml(label||'')}</h2>
       <p style="color:var(--muted); font-size:14px; max-width:280px;">This module is planned for a later phase, alongside dried tuna, Rihaakuru production and detailed expense tracking.</p>
     </div>

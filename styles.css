@@ -56,7 +56,7 @@ input,select,textarea{font-family:inherit;}
   display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
   z-index:999;
 }
-.splash-mark{font-size:48px;}
+.splash-mark{display:flex; align-items:center; justify-content:center; color:var(--sand);}
 .splash-title{font-family:var(--serif); font-size:22px; letter-spacing:0.06em; font-weight:600;}
 
 #app{display:flex; flex-direction:column; height:100vh; height:100dvh;}
@@ -87,7 +87,7 @@ input,select,textarea{font-family:inherit;}
   flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;
   background:none; border:none; padding:9px 0 8px; color:var(--muted); font-size:11px; font-weight:500;
 }
-.navicon{font-size:20px;}
+.navicon{display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;}
 .navbtn.active{color:var(--teal-strong);}
 
 /* ---- typography ---- */
@@ -156,7 +156,7 @@ h3{font-size:15px; font-weight:600;}
   padding:12px 10px; font-size:13px; font-weight:600; color:var(--ink);
   display:flex; flex-direction:column; align-items:center; gap:6px;
 }
-.quick-btn .qicon{font-size:20px;}
+.quick-btn .qicon{display:flex; align-items:center; justify-content:center; height:22px;}
 
 /* ---- forms ---- */
 .field{margin-bottom:14px;}
