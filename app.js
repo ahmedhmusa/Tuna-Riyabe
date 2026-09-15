@@ -1185,8 +1185,8 @@ async function renderHome(view){
     <div class="section grid2">
       <div class="card stat-card tappable" data-nav="inventory"><div class="label">${icon('fish')} Fresh Tuna</div><div class="value num">${fmtKg(SETTINGS.freshTunaStock||0)}</div>
         ${(SETTINGS.freshTunaStock||0) <= (SETTINGS.lowStockKg||10) ? '<div class="sub" style="color:var(--coral)">Low stock</div>' : '<div class="sub">In stock</div>'}</div>
-      <div class="card stat-card tappable" data-nav="inventory"><div class="label">${icon('package')} Dried Tuna</div><div class="value num">${driedPacks}</div><div class="sub">packs available</div></div>
-      <div class="card stat-card tappable" data-nav="inventory"><div class="label" style="color:var(--brown);">${icon('jar')} Rihaakuru</div><div class="value num" style="color:var(--brown);">${rkBottles}</div><div class="sub">bottles available</div></div>
+      <div class="card stat-card tappable" data-sell="dried"><div class="label">${icon('package')} Dried Tuna</div><div class="value num">${driedPacks}</div><div class="sub">packs available</div></div>
+      <div class="card stat-card tappable" data-sell="rihaakuru"><div class="label" style="color:var(--brown);">${icon('jar')} Rihaakuru</div><div class="value num" style="color:var(--brown);">${rkBottles}</div><div class="sub">bottles available</div></div>
       <div class="card stat-card tappable" data-nav="purchases"><div class="label">${icon('anchor')} Today's Purchases</div><div class="value num" style="font-size:18px;">${fmtMoney(todayPurchasesTotal)}</div><div class="sub">${todayPurchases.length} purchase${todayPurchases.length===1?'':'s'}</div></div>
       <div class="card stat-card tappable" data-nav="expenses"><div class="label" style="color:var(--danger);">${icon('receipt')} Today's Expenses</div><div class="value num" style="font-size:18px; color:var(--danger);">${fmtMoney(todayExpensesTotal)}</div><div class="sub">${todayExpenses.length} entr${todayExpenses.length===1?'y':'ies'}</div></div>
       <div class="card stat-card tappable" data-nav="credit"><div class="label">${icon('card')} Customer Credit</div><div class="value num" style="font-size:18px;">${fmtMoney(totalCredit)}</div><div class="sub">${custWithCredit.length} owing</div></div>
@@ -1221,7 +1221,10 @@ async function renderHome(view){
       </div>
     </div>
   `;
-  $$('.stat-card.tappable', view).forEach(card=> card.addEventListener('click', ()=> go(card.dataset.nav)));
+  $$('.stat-card.tappable', view).forEach(card=> card.addEventListener('click', ()=>{
+    if(card.dataset.sell) openGeneralSale(card.dataset.sell);
+    else go(card.dataset.nav);
+  }));
   $('#qaSell')?.addEventListener('click', openQuickSale);
   $('#qaGeneralSale')?.addEventListener('click', openGeneralSale);
   $('#qaPurchase')?.addEventListener('click', openQuickPurchase);
@@ -1842,8 +1845,16 @@ async function openQuickSalePreset(cust){
   if(btn){ btn.click(); }
 }
 
+/** Builds the Dhivehi payment-reminder message: greeting, customer name,
+    amount owed, then the account to send payment to. */
+function buildReminderMessage(cust){
+  const acctName = SETTINGS.bankAccountName || 'މުހައްމަދު ރިޔާޒު';
+  const acctNumber = SETTINGS.bankAccountNumber || '';
+  return `އައްސަލާމު އަލައިކުން، ${cust.name} ގަނެފައިވާ މަހަށް ${fmtMoney(cust.balance||0)} ${acctName} ${acctNumber} އަށް ފޮނުވާލަ ދިނުމަށް އެދެން. ޝުކުރިއްޔާ`;
+}
+
 function shareReminder(cust){
-  const msg = `Hi ${cust.name}, your current outstanding balance for ${SETTINGS.businessName||'Island Tuna'} purchases is ${fmtMoney(cust.balance||0)}. Thank you.`;
+  const msg = buildReminderMessage(cust);
   if(navigator.share){
     navigator.share({ text: msg }).catch(()=>{});
   } else {
@@ -1857,7 +1868,7 @@ function shareReminder(cust){
     the text to the clipboard as a fallback, since the sms: link's exact
     behaviour (and whether a number is pre-filled) varies by device. */
 function shareReminderViaSMS(cust){
-  const msg = `Hi ${cust.name}, your current outstanding balance for ${SETTINGS.businessName||'Island Tuna'} purchases is ${fmtMoney(cust.balance||0)}. Thank you.`;
+  const msg = buildReminderMessage(cust);
   navigator.clipboard?.writeText(msg).catch(()=>{});
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || navigator.platform || '');
   const sep = isIOS ? '&' : '?';
@@ -2608,7 +2619,7 @@ function openExpenseForm(){
 /* ============================================================
    GENERAL SALE SCREEN (multi-product)
    ============================================================ */
-async function openGeneralSale(){
+async function openGeneralSale(presetType){
   const customers = (await db.customers.toArray()).filter(c=>c.active!==false);
   const products = (await db.products.toArray()).filter(p=>p.active!==false);
   let selectedCustomer = null;
@@ -2679,14 +2690,21 @@ async function openGeneralSale(){
     $('#gAddProduct').onclick = ()=> addItemPrompt('product');
     $('#gSave').onclick = save;
   }
-  function addItemPrompt(kind){
+  function addItemPrompt(kind, filterType){
+    const pickList = (kind==='product' && filterType) ? products.filter(p=>p.type===filterType) : products;
+    if(kind==='product' && !pickList.length){
+      toast(`Add a ${filterType==='rihaakuru'?'Rihaakuru':'Dried Tuna'} product first`);
+      closeSheet();
+      openProductForm(null, filterType);
+      return;
+    }
     const inner = document.createElement('div');
     inner.innerHTML = kind==='fresh'
       ? `<div class="field"><label>Weight (kg)</label><input type="number" step="0.01" id="aiQty"></div>
          <div class="field"><label>Price per kg</label><input type="number" step="0.01" id="aiPrice" value="${SETTINGS.defaultFreshPrice||''}"></div>`
-      : `<div class="field"><label>Product</label><select id="aiProd">${products.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — stock ${p.stock||0}</option>`).join('')}</select></div>
+      : `<div class="field"><label>Product</label><select id="aiProd">${pickList.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — stock ${p.stock||0}</option>`).join('')}</select></div>
          <div class="field"><label>Quantity</label><input type="number" step="1" id="aiQty" value="1"></div>
-         <div class="field"><label>Unit price</label><input type="number" step="0.01" id="aiPrice" value="${products[0]?.sellPrice||''}"></div>`;
+         <div class="field"><label>Unit price</label><input type="number" step="0.01" id="aiPrice" value="${pickList[0]?.sellPrice||''}"></div>`;
     const prev = sheet.innerHTML;
     sheet.innerHTML = `<div class="sheet-handle"></div>
       <div class="sheet-header"><h2>Add ${kind==='fresh'?'Fresh Tuna':'Item'}</h2><button class="sheet-close" id="aiClose">${icon('x',16)}</button></div>`;
@@ -2697,7 +2715,7 @@ async function openGeneralSale(){
     $('#aiClose').onclick = ()=> render();
     if(kind==='product'){
       $('#aiProd').addEventListener('change', ()=>{
-        const p = products.find(x=>x.id===Number($('#aiProd').value));
+        const p = pickList.find(x=>x.id===Number($('#aiProd').value));
         $('#aiPrice').value = p?.sellPrice||'';
       });
     }
@@ -2708,7 +2726,7 @@ async function openGeneralSale(){
       if(kind==='fresh'){
         items.push({ kind:'fresh', name:'Fresh Yellowfin Tuna', qty, unitPrice });
       } else {
-        const p = products.find(x=>x.id===Number($('#aiProd').value));
+        const p = pickList.find(x=>x.id===Number($('#aiProd').value));
         items.push({ kind:'product', productId:p.id, name:p.name, qty, unitPrice });
       }
       render();
@@ -2726,6 +2744,7 @@ async function openGeneralSale(){
   }
   render();
   openSheet();
+  if(presetType) addItemPrompt('product', presetType);
 }
 function renderMore(view){
   const items = [
@@ -3060,6 +3079,11 @@ function renderSettings(view){
     </div>
     <h2 class="section">Default Prices</h2>
     <div class="field section"><label>Fresh tuna price/kg</label><input type="number" id="setDefPrice" value="${SETTINGS.defaultFreshPrice||0}"></div>
+    <h2 class="section">Payment Account (for SMS reminders)</h2>
+    <div class="stack section">
+      <div class="field"><label>Account holder name</label><input id="setAcctName" value="${escapeHtml(SETTINGS.bankAccountName||'')}" placeholder="e.g. މުހައްމަދު ރިޔާޒު"></div>
+      <div class="field"><label>Account number</label><input id="setAcctNumber" value="${escapeHtml(SETTINGS.bankAccountNumber||'')}" placeholder="e.g. 7730000123456"></div>
+    </div>
     <h2 class="section">Inventory</h2>
     <div class="field section"><label>Low-stock threshold (kg)</label><input type="number" id="setLowStock" value="${SETTINGS.lowStockKg||10}"></div>
     <div class="field section">
@@ -3088,6 +3112,7 @@ function renderSettings(view){
       businessName: $('#setBiz').value.trim() || 'Island Tuna', island: $('#setIsland').value.trim(),
       phone: $('#setPhone').value.trim(), address: $('#setAddress').value.trim(), currency: $('#setCurrency').value.trim() || 'MVR',
       defaultFreshPrice: Number($('#setDefPrice').value||0), lowStockKg: Number($('#setLowStock').value||10),
+      bankAccountName: $('#setAcctName').value.trim(), bankAccountNumber: $('#setAcctNumber').value.trim(),
       allowNegativeStock: neg, theme
     });
     toast('Settings saved'); renderView();
@@ -3135,6 +3160,7 @@ async function boot(){
         id:1, businessName:'Island Tuna', island:'', phone:'', address:'',
         currency:'MVR', theme:'light', defaultFreshPrice:90, freshTunaStock:0,
         lowStockKg:10, pinEnabled:false, pinHash:'', allowNegativeStock:false,
+        bankAccountName:'މުހައްމަދު ރިޔާޒު', bankAccountNumber:'',
         demoMode:false, lastBackup:null
       });
       await loadSettings();
