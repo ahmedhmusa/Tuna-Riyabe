@@ -2408,7 +2408,17 @@ async function boot(){
     document.getElementById('app').hidden = false;
 
     if(!SETTINGS){
-      await firstRunWizard();
+      // No setup form — go straight to a working dashboard with sensible
+      // defaults. Business name, island, phone, and currency can all be
+      // changed anytime from More → Settings.
+      await db.settings.put({
+        id:1, businessName:'Island Tuna', island:'', phone:'', address:'',
+        currency:'MVR', theme:'light', defaultFreshPrice:90, freshTunaStock:0,
+        lowStockKg:10, pinEnabled:false, pinHash:'', allowNegativeStock:false,
+        demoMode:false, lastBackup:null
+      });
+      await loadSettings();
+      await seedProductsIfEmpty();
     }
     applyTheme();
     $('#bizNameTop').textContent = SETTINGS.businessName || 'ISLAND TUNA';
