@@ -942,7 +942,8 @@ async function recordGeneralSale({customerId, customerName, items, discount, pay
   }
   if(freshCostBasis>0) await db.sales.update(id, { freshCostBasis: Math.round(freshCostBasis*100)/100 });
   if(balance>0 && customerId){
-    await addCustomerLedgerEntry(customerId, 'credit', balance, 'sale', id, `Sale ${saleNo}`);
+    const itemSummary = items.map(it=> `${it.name} ${it.qty}${it.kind==='fresh'?'kg':'x'}`).join(', ');
+    await addCustomerLedgerEntry(customerId, 'credit', balance, 'sale', id, `${itemSummary} — ${saleNo}`);
   }
   await audit('create','sale',id, `${saleNo} ${items.length} items`);
   if(!silent) toast(`Sale saved · ${saleNo}`);
@@ -1852,30 +1853,23 @@ async function openQuickSalePreset(cust){
     cleared to zero, then the running total — followed by the exact Dhivehi
     payment-request sentence, unchanged from what was written by hand. */
 async function buildReminderMessage(cust){
-  const acctName = SETTINGS.bankAccountName || 'މުހައްމަދު ރިޔާޒު';
   const acctNumber = SETTINGS.bankAccountNumber || '';
-  const closing = `އައްސަލާމު އަލައިކުން، ${cust.name} ގަނެފައިވާ މަހަށް ${fmtMoney(cust.balance||0)} ${acctName} ${acctNumber} އަށް ފޮނުވާލަ ދިނުމަށް އެދެން. ޝުކުރިއްޔާ`;
+  const greeting = 'އަންސަލާމް އަލައެކުން';
 
   const ledger = (await db.customerTx.where('customerId').equals(cust.id).toArray())
     .sort((a,b)=> new Date(a.date)-new Date(b.date));
-  if(!ledger.length) return closing;
 
-  // Only the open tab since the balance last cleared to zero, so the
-  // statement stays short and relevant rather than listing all history.
+  // Only the open tab since the balance last cleared to zero, and only the
+  // purchase (credit) lines — payments already made aren't "purchase details".
   let startIdx = 0;
   for(let i=ledger.length-1; i>=0; i--){
     if(ledger[i].runningBalance<=0){ startIdx = i+1; break; }
   }
-  let lines = ledger.slice(startIdx);
-  let truncatedNote = '';
-  if(lines.length>10){
-    truncatedNote = `(+${lines.length-10} earlier)\n`;
-    lines = lines.slice(-10);
-  }
+  const openCredits = ledger.slice(startIdx).filter(t=>t.type==='credit');
+  const details = openCredits.map(t=> t.notes || fmtMoney(t.amount)).join(', ');
 
-  const itemLines = lines.map(t=> `${fmtDate(t.date)}  ${t.type==='credit'?'+':'-'}${fmtMoney(t.amount)}`).join('\n');
-  const header = `${SETTINGS.businessName||'Island Tuna'}\n${cust.name}\n`;
-  return `${header}\n${truncatedNote}${itemLines}\n\nBalance: ${fmtMoney(cust.balance||0)}\n\n${closing}`;
+  const amount = fmtMoney(cust.balance||0);
+  return `${greeting}، ${cust.name}, ${details ? details+' ' : ''}${amount}. ${acctNumber}`;
 }
 
 async function shareReminder(cust){
