@@ -1226,7 +1226,7 @@ async function renderHome(view){
     else go(card.dataset.nav);
   }));
   $('#qaSell')?.addEventListener('click', openQuickSale);
-  $('#qaGeneralSale')?.addEventListener('click', openGeneralSale);
+  $('#qaGeneralSale')?.addEventListener('click', ()=> openGeneralSale());
   $('#qaPurchase')?.addEventListener('click', openQuickPurchase);
   $('#qaPayment')?.addEventListener('click', ()=> openPaymentPicker());
   $('#qaExpense')?.addEventListener('click', openExpenseForm);
@@ -1250,11 +1250,11 @@ async function openQuickSale(){
     <div class="sheet-header"><h2>Fresh Tuna Sale</h2><button class="sheet-close" id="scClose">${icon('x',16)}</button></div>
     <div class="field">
       <label>Customer</label>
-      <div class="pill-row" id="custPills">
-        <button class="customer-pill active" data-id="">Walk-in</button>
-        ${customers.map(c=>`<button class="customer-pill" data-id="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
-        <button class="customer-pill" id="pillNewCust" style="border-style:dashed;">+ New Customer</button>
-      </div>
+      <select id="custSelect">
+        <option value="">Walk-in</option>
+        ${customers.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
+        <option value="__new__">+ New Customer</option>
+      </select>
     </div>
     <div class="field"><label>Weight (kg)</label><input type="number" inputmode="decimal" step="0.01" id="sWeight" placeholder="0.0" autofocus></div>
     <div class="field"><label>Price per kg (${SETTINGS.currency})</label><input type="number" inputmode="decimal" step="0.01" id="sPrice" value="${SETTINGS.defaultFreshPrice||''}"></div>
@@ -1284,13 +1284,14 @@ async function openQuickSale(){
   $('#sWeight').addEventListener('input', recalc);
   $('#sPrice').addEventListener('input', recalc);
 
-  $('#custPills').addEventListener('click', (e)=>{
-    const btn = e.target.closest('.customer-pill'); if(!btn) return;
-    if(btn.id==='pillNewCust'){ openCustomerForm(async (newCust)=>{ await openQuickSale(); const pills = $('#custPills'); }); return; }
-    $$('.customer-pill', $('#custPills')).forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-    const id = btn.dataset.id;
-    selectedCustomer = id ? customers.find(c=>String(c.id)===id) : null;
+  $('#custSelect').addEventListener('change', (e)=>{
+    const val = e.target.value;
+    if(val==='__new__'){
+      e.target.value = selectedCustomer? String(selectedCustomer.id) : '';
+      openCustomerForm(async (newCust)=>{ await openQuickSale(); });
+      return;
+    }
+    selectedCustomer = val ? customers.find(c=>String(c.id)===val) : null;
   });
 
   $('#payType').addEventListener('click', (e)=>{
@@ -1468,7 +1469,7 @@ async function renderSalesList(view){
   $$('.pill-filter', view).forEach(b=> b.addEventListener('click', ()=>{ STATE.salesFilter = b.dataset.v; renderSalesList(view); }));
   $$('.list-item', view).forEach(li=> li.addEventListener('click', ()=> openSaleDetail(Number(li.dataset.id))));
   $('#newSaleBtn').addEventListener('click', openQuickSale);
-  $('#newMultiBtn').addEventListener('click', openGeneralSale);
+  $('#newMultiBtn').addEventListener('click', ()=> openGeneralSale());
 }
 function periodPills(current, key){
   const opts = [['today','Today'],['week','This Week'],['month','This Month'],['all','All']];
@@ -1840,9 +1841,9 @@ async function renderCustomerDetail(view, customerId){
 
 async function openQuickSalePreset(cust){
   await openQuickSale();
-  // pre-select the customer pill if present
-  const btn = $(`.customer-pill[data-id="${cust.id}"]`);
-  if(btn){ btn.click(); }
+  // pre-select this customer in the dropdown
+  const sel = $('#custSelect');
+  if(sel){ sel.value = String(cust.id); sel.dispatchEvent(new Event('change', {bubbles:true})); }
 }
 
 /** Builds the Dhivehi payment-reminder message: greeting, customer name,
@@ -2659,10 +2660,11 @@ async function openGeneralSale(presetType){
       <div class="sheet-handle"></div>
       <div class="sheet-header"><h2>New Sale</h2><button class="sheet-close" id="gClose">${icon('x',16)}</button></div>
       <div class="field"><label>Customer</label>
-        <div class="pill-row" id="gCustPills">
-          <button class="customer-pill ${!selectedCustomer?'active':''}" data-id="">Walk-in</button>
-          ${customers.map(c=>`<button class="customer-pill ${selectedCustomer?.id===c.id?'active':''}" data-id="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
-        </div>
+        <select id="gCustSelect">
+          <option value="" ${!selectedCustomer?'selected':''}>Walk-in</option>
+          ${customers.map(c=>`<option value="${c.id}" ${selectedCustomer?.id===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}
+          <option value="__new__">+ New Customer</option>
+        </select>
         ${selectedCustomer && (selectedCustomer.balance||0)>0 ? `<div style="font-size:12px;color:var(--coral);margin-top:8px;">Already owes ${fmtMoney(selectedCustomer.balance)}</div>`:''}
       </div>
       <h3 style="margin-bottom:8px;">Items</h3>
@@ -2700,9 +2702,18 @@ async function openGeneralSale(presetType){
   }
   function bind(){
     $('#gClose').onclick = closeSheet;
-    $('#gCustPills').addEventListener('click', e=>{
-      const b = e.target.closest('.customer-pill'); if(!b) return;
-      selectedCustomer = b.dataset.id ? customers.find(c=>String(c.id)===b.dataset.id) : null;
+    $('#gCustSelect').addEventListener('change', e=>{
+      const val = e.target.value;
+      if(val==='__new__'){
+        e.target.value = selectedCustomer? String(selectedCustomer.id) : '';
+        openCustomerForm(async (newCust)=>{
+          customers.push(newCust);
+          selectedCustomer = newCust;
+          render();
+        });
+        return;
+      }
+      selectedCustomer = val ? customers.find(c=>String(c.id)===val) : null;
       render();
     });
     $('#gPayType').addEventListener('click', e=>{
