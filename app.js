@@ -1854,7 +1854,7 @@ async function openQuickSalePreset(cust){
     payment-request sentence, unchanged from what was written by hand. */
 async function buildReminderMessage(cust){
   const acctNumber = SETTINGS.bankAccountNumber || '';
-  const greeting = 'އަންސަލާމް އަލައެކުން';
+  const greeting = 'އަސްއަލާމު އަލައެކުން';
 
   const ledger = (await db.customerTx.where('customerId').equals(cust.id).toArray())
     .sort((a,b)=> new Date(a.date)-new Date(b.date));
@@ -1866,10 +1866,23 @@ async function buildReminderMessage(cust){
     if(ledger[i].runningBalance<=0){ startIdx = i+1; break; }
   }
   const openCredits = ledger.slice(startIdx).filter(t=>t.type==='credit');
-  const details = openCredits.map(t=> t.notes || fmtMoney(t.amount)).join(', ');
+
+  // Build each detail line from the actual sale record's structured data
+  // rather than free-text notes, so item types translate reliably.
+  const detailLines = [];
+  for(const t of openCredits){
+    const sale = t.refType==='sale' && t.refId ? await db.sales.get(t.refId) : null;
+    if(sale && sale.items && sale.items.length){
+      detailLines.push(sale.items.map(it=> it.kind==='fresh' ? `ރޯމަސް ${fmtKg(it.qty)}` : `${it.name} ${it.qty}`).join('، '));
+    } else if(sale){
+      detailLines.push(`ރޯމަސް ${fmtKg(sale.weightKg)}`);
+    } else if(t.notes){
+      detailLines.push(t.notes);
+    }
+  }
 
   const amount = fmtMoney(cust.balance||0);
-  return `${greeting}، ${cust.name}, ${details ? details+' ' : ''}${amount}. ${acctNumber}`;
+  return `${greeting}، ${cust.name}\n${detailLines.join('\n')}\n${amount}\n\n${acctNumber}`;
 }
 
 async function shareReminder(cust){
