@@ -1852,6 +1852,13 @@ async function openQuickSalePreset(cust){
 /** Builds an itemized statement — every ledger line since the balance last
     cleared to zero, then the running total — followed by the exact Dhivehi
     payment-request sentence, unchanged from what was written by hand. */
+/** Plain number formatting for the Dhivehi invoice style (no currency
+    prefix, no unnecessary decimals — "5" not "5.00", "150" not "150.00"). */
+function fmtPlainNumber(n){
+  const rounded = Math.round(Number(n||0)*100)/100;
+  return rounded % 1 === 0 ? String(rounded) : rounded.toFixed(2);
+}
+
 async function buildReminderMessage(cust){
   const acctNumber = SETTINGS.bankAccountNumber || '';
   const greeting = 'އަސްއަލާމު އަލައެކުން';
@@ -1867,22 +1874,33 @@ async function buildReminderMessage(cust){
   }
   const openCredits = ledger.slice(startIdx).filter(t=>t.type==='credit');
 
-  // Build each detail line from the actual sale record's structured data
-  // rather than free-text notes, so item types translate reliably.
-  const detailLines = [];
+  // Total fresh tuna kg across the open tab, plus any non-fresh items
+  // (kept in English — no confirmed Dhivehi term for packaged products yet).
+  let totalFreshKg = 0;
+  const otherLines = [];
   for(const t of openCredits){
     const sale = t.refType==='sale' && t.refId ? await db.sales.get(t.refId) : null;
     if(sale && sale.items && sale.items.length){
-      detailLines.push(sale.items.map(it=> it.kind==='fresh' ? `ރޯމަސް ${fmtKg(it.qty)}` : `${it.name} ${it.qty}`).join('، '));
+      for(const it of sale.items){
+        if(it.kind==='fresh') totalFreshKg += it.qty;
+        else otherLines.push(`${it.qty} × ${it.name}`);
+      }
     } else if(sale){
-      detailLines.push(`ރޯމަސް ${fmtKg(sale.weightKg)}`);
+      totalFreshKg += sale.weightKg||0;
     } else if(t.notes){
-      detailLines.push(t.notes);
+      otherLines.push(t.notes);
     }
   }
 
-  const amount = fmtMoney(cust.balance||0);
-  return `${greeting}، ${cust.name}\n${detailLines.join('\n')}\n${amount}\n\n${acctNumber}`;
+  const amount = fmtPlainNumber(cust.balance||0);
+  const lines = [`${greeting}، `, cust.name];
+  lines.push(totalFreshKg>0
+    ? `${fmtPlainNumber(totalFreshKg)} ކިލޯ ރޯމަސް އަށް ވާ -/${amount} ރުފިޔާ `
+    : `-/${amount} ރުފިޔާ `);
+  if(otherLines.length) lines.push(otherLines.join('، '));
+  lines.push('ތިރިގައިވާ އެކައުންޓުއަށް ފޮނުވާލަދެއްވާ');
+  lines.push(acctNumber);
+  return lines.join('\n');
 }
 
 async function shareReminder(cust){
