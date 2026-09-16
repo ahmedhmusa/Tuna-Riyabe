@@ -1874,32 +1874,40 @@ async function buildReminderMessage(cust){
   }
   const openCredits = ledger.slice(startIdx).filter(t=>t.type==='credit');
 
-  // Total fresh tuna kg across the open tab, plus any non-fresh items
-  // (kept in English — no confirmed Dhivehi term for packaged products yet).
-  let totalFreshKg = 0;
-  const otherLines = [];
+  // Track both quantity AND amount per product type across the whole open
+  // tab, so each line's price is a real sum (correct even if prices varied
+  // across sales) rather than one quantity multiplied by a single price.
+  let freshKg=0, freshAmt=0, driedUnits=0, driedAmt=0, rkUnits=0, rkAmt=0;
+  const unknownLines = [];
   for(const t of openCredits){
     const sale = t.refType==='sale' && t.refId ? await db.sales.get(t.refId) : null;
     if(sale && sale.items && sale.items.length){
       for(const it of sale.items){
-        if(it.kind==='fresh') totalFreshKg += it.qty;
-        else otherLines.push(`${it.qty} × ${it.name}`);
+        const lineAmt = it.qty*it.unitPrice;
+        if(it.kind==='fresh'){ freshKg+=it.qty; freshAmt+=lineAmt; continue; }
+        const product = it.productId ? await db.products.get(it.productId) : null;
+        if(product?.type==='dried'){ driedUnits+=it.qty; driedAmt+=lineAmt; }
+        else if(product?.type==='rihaakuru'){ rkUnits+=it.qty; rkAmt+=lineAmt; }
+        else unknownLines.push(`${it.qty} × ${it.name} -/${fmtPlainNumber(lineAmt)} ރުފިޔާ`);
       }
     } else if(sale){
-      totalFreshKg += sale.weightKg||0;
+      freshKg += sale.weightKg||0; freshAmt += sale.weightKg*sale.pricePerKg;
     } else if(t.notes){
-      otherLines.push(t.notes);
+      unknownLines.push(t.notes);
     }
   }
 
-  const amount = fmtPlainNumber(cust.balance||0);
-  const lines = [`${greeting}، `, cust.name];
-  lines.push(totalFreshKg>0
-    ? `${fmtPlainNumber(totalFreshKg)} ކިލޯ ރޯމަސް އަށް ވާ -/${amount} ރުފިޔާ `
-    : `-/${amount} ރުފިޔާ `);
-  if(otherLines.length) lines.push(otherLines.join('، '));
+  const itemLines = [];
+  if(freshKg>0) itemLines.push(`${fmtPlainNumber(freshKg)} ކިލޯ ރޯމަސް -/${fmtPlainNumber(freshAmt)} ރުފިޔާ`);
+  if(driedUnits>0) itemLines.push(`${fmtPlainNumber(driedUnits)} × ވަޅޯ މަސަ، -/${fmtPlainNumber(driedAmt)} ރުފިޔާ`);
+  if(rkUnits>0) itemLines.push(`${fmtPlainNumber(rkUnits)} × ރިހާކުރު ފުޅި، -/${fmtPlainNumber(rkAmt)} ރުފިޔާ`);
+  itemLines.push(...unknownLines);
+
+  const totalClause = `އަށް ވާ -/${fmtPlainNumber(cust.balance||0)} ރުފިޔާ`;
+
+  const lines = [`${greeting}، `, cust.name, ...itemLines, totalClause];
   lines.push('ތިރިގައިވާ އެކައުންޓުއަށް ފޮނުވާލަދެއްވާ');
-  lines.push(acctNumber);
+  lines.push(' '.repeat(60) + acctNumber);
   return lines.join('\n');
 }
 
